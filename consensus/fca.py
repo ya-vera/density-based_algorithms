@@ -1,334 +1,523 @@
-from __future__ import annotations
-
-import math
+import copy
+import functools
+import inspect
+import platform
+import re
 import warnings
-from typing import Callable, Dict, FrozenSet, List, Optional, Set, Tuple
+from collections import defaultdict
 
 import numpy as np
 
-from .base import AbstractConsensus
+from sklearn import __version__
+from sklearn._config import config_context, get_config
+from sklearn.exceptions import InconsistentVersionWarning
+from sklearn.utils._metadata_requests import _MetadataRequester, _routing_enabled
+from sklearn.utils._missing import is_pandas_na, is_scalar_nan
+from sklearn.utils._param_validation import validate_parameter_constraints
+from sklearn.utils._repr_html.base import ReprHTMLMixin, _HTMLDocumentationLinkMixin
+from sklearn.utils._repr_html.estimator import estimator_html_repr
+from sklearn.utils._repr_html.params import ParamsDict
+from sklearn.utils._set_output import _SetOutputMixin
+from sklearn.utils._tags import (
+    ClassifierTags,
+    RegressorTags,
+    Tags,
+    TargetTags,
+    TransformerTags,
+    get_tags,
+)
+from sklearn.utils.fixes import _IS_32BIT
+from sklearn.utils.validation import (
+    _check_feature_names_in,
+    _generate_get_feature_names_out,
+    _is_fitted,
+    check_array,
+    check_is_fitted,
+)
 
 
-def _build_context(
-    label_matrix: np.ndarray,
-    noise_label: int = -1,
-) -> Tuple[np.ndarray, List[Tuple[int, int]]]:
-    n_runs, n_objects = label_matrix.shape
-    attrs: List[Tuple[int, int]] = []
-    for t in range(n_runs):
-        row = label_matrix[t]
-        for c in sorted(set(row[row != noise_label].tolist())):
-            attrs.append((t, int(c)))
-
-    n_attrs = len(attrs)
-    context = np.zeros((n_objects, n_attrs), dtype=bool)
-    for col, (t, c) in enumerate(attrs):
-        context[:, col] = label_matrix[t] == c
-
-    return context, attrs
+def clone(estimator, *, safe=True):
+    if hasattr(estimator, "__sklearn_clone__") and not inspect.isclass(estimator):
+        return estimator.__sklearn_clone__()
+    return _clone_parametrized(estimator, safe=safe)
 
 
-def _intent_run_support(intent_mask: np.ndarray, attrs: List[Tuple[int, int]]) -> int:
-    runs: Set[int] = set()
-    for col, (t, _) in enumerate(attrs):
-        if intent_mask[col]:
-            runs.add(t)
-    return len(runs)
+def _clone_parametrized(estimator, *, safe=True):
 
-
-def _derive_intent(context: np.ndarray, extent: FrozenSet[int]) -> np.ndarray:
-    if not extent:
-        return np.ones(context.shape[1], dtype=bool)
-    idx = list(extent)
-    return np.all(context[idx, :], axis=0)
-
-
-def _derive_extent(context: np.ndarray, intent_mask: np.ndarray) -> FrozenSet[int]:
-    if not intent_mask.any():
-        return frozenset(range(context.shape[0]))
-    return frozenset(int(i) for i in np.where(np.all(context[:, intent_mask], axis=1))[0])
-
-
-def _cbo_process(
-    context: np.ndarray,
-    attrs: List[Tuple[int, int]],
-    min_support: int,
-    min_extent_size: int,
-    extent: FrozenSet[int],
-    intent_mask: np.ndarray,
-    start_attr: int,
-    concepts: List[Dict],
-    seen_extents: Set[FrozenSet[int]],
-    n_objects: int,
-) -> None:
-    support = _intent_run_support(intent_mask, attrs)
-    if support >= min_support and len(extent) >= min_extent_size:
-        if extent not in seen_extents:
-            seen_extents.add(extent)
-            concepts.append({
-                "extent": extent,
-                "intent_mask": intent_mask.copy(),
-                "support": support,
-                "size": len(extent),
-            })
-
-    n_attrs = context.shape[1]
-    for j in range(start_attr, n_attrs):
-        if intent_mask[j]:
-            continue
-
-        new_intent = intent_mask.copy()
-        new_intent[j] = True
-        new_extent = _derive_extent(context, new_intent)
-        closed_intent = _derive_intent(context, new_extent)
-
-        skip = False
-        for jj in range(j):
-            if closed_intent[jj] and not intent_mask[jj]:
-                skip = True
-                break
-        if skip:
-            continue
-
-        if new_extent not in seen_extents:
-            _cbo_process(
-                context, attrs, min_support, min_extent_size,
-                new_extent, closed_intent, j + 1,
-                concepts, seen_extents, n_objects,
-            )
-
-
-class FCAConsensus(AbstractConsensus):
-
-    name = "fca"
-
-    def __init__(
-        self,
-        base_algorithms: Optional[List[Callable[[np.ndarray], np.ndarray]]] = None,
-        min_support_frac: float = 0.5,
-        min_extent_size: int = 1,
-        greedy_order: str = "size_desc",
-        use_caspailleur: bool = False,
-        noise_label: int = -1,
-    ) -> None:
-        self.base_algorithms = base_algorithms or []
-        self.min_support_frac = float(min_support_frac)
-        self.min_extent_size = int(min_extent_size)
-        self.greedy_order = greedy_order
-        self.use_caspailleur = use_caspailleur
-        self.noise_label = noise_label
-
-        self.labels_: Optional[np.ndarray] = None
-        self.antichain_: Optional[List[Dict]] = None
-        self.context_: Optional[np.ndarray] = None
-        self.attrs_: Optional[List[Tuple[int, int]]] = None
-        self.label_matrix_: Optional[np.ndarray] = None
-        self.n_runs_: int = 0
-
-    def fit_from_labels(self, label_matrix: np.ndarray) -> "FCAConsensus":
-        self.label_matrix_ = label_matrix
-        self.n_runs_ = label_matrix.shape[0]
-        n_objects = label_matrix.shape[1]
-        min_support = max(1, math.ceil(self.min_support_frac * self.n_runs_))
-
-        context, attrs = _build_context(label_matrix, noise_label=self.noise_label)
-        self.context_ = context
-        self.attrs_ = attrs
-
-        if self.use_caspailleur:
-            candidates = self._mine_concepts_caspailleur(
-                context, attrs, min_support, n_objects
-            )
+    estimator_type = type(estimator)
+    if estimator_type is dict:
+        return {k: clone(v, safe=safe) for k, v in estimator.items()}
+    elif estimator_type in (list, tuple, set, frozenset):
+        return estimator_type([clone(e, safe=safe) for e in estimator])
+    elif not hasattr(estimator, "get_params") or isinstance(estimator, type):
+        if not safe:
+            return copy.deepcopy(estimator)
         else:
-            candidates = self._mine_concepts_cbo(
-                context, attrs, min_support, n_objects
-            )
-
-        if self.greedy_order == "support_desc":
-            candidates.sort(key=lambda c: (-c["support"], -c["size"]))
-        elif self.greedy_order == "natural":
-            pass
-        else:
-            candidates.sort(key=lambda c: (-c["size"], -c["support"]))
-
-        antichain, covered_mask = self._extract_antichain(candidates, n_objects)
-        self.antichain_ = antichain
-
-        labels = self._assign_labels(antichain, covered_mask, n_objects, context)
-        self.labels_ = labels
-        return self
-
-    def fit(self, X: np.ndarray) -> "FCAConsensus":
-        if not self.base_algorithms:
-            raise ValueError(
-                "base_algorithms must be provided when calling fit(X). "
-                "Alternatively, call fit_from_labels(label_matrix) directly."
-            )
-        rows = []
-        for alg in self.base_algorithms:
-            try:
-                rows.append(np.asarray(alg(X), dtype=int))
-            except Exception as e:
-                warnings.warn(f"FCAConsensus: base algorithm failed: {e}")
-        if not rows:
-            self.labels_ = np.zeros(X.shape[0], dtype=int)
-            return self
-        return self.fit_from_labels(np.vstack(rows))
-
-    def fit_predict(self, X: np.ndarray) -> np.ndarray:
-        self.fit(X)
-        return self.labels_
-
-    def _mine_concepts_cbo(
-        self,
-        context: np.ndarray,
-        attrs: List[Tuple[int, int]],
-        min_support: int,
-        n_objects: int,
-    ) -> List[Dict]:
-        concepts: List[Dict] = []
-        seen_extents: Set[FrozenSet[int]] = set()
-
-        full_extent = frozenset(range(n_objects))
-        full_intent = _derive_intent(context, full_extent)
-
-        _cbo_process(
-            context=context,
-            attrs=attrs,
-            min_support=min_support,
-            min_extent_size=self.min_extent_size,
-            extent=full_extent,
-            intent_mask=full_intent,
-            start_attr=0,
-            concepts=concepts,
-            seen_extents=seen_extents,
-            n_objects=n_objects,
-        )
-
-        return concepts
-
-    def _mine_concepts_caspailleur(
-        self,
-        context: np.ndarray,
-        attrs: List[Tuple[int, int]],
-        min_support: int,
-        n_objects: int,
-    ) -> List[Dict]:
-        try:
-            import pandas as pd
-            import caspailleur as csp
-
-            col_names = [f"r{t}_c{c}" for (t, c) in attrs]
-            df = pd.DataFrame(context, columns=col_names)
-            df.index = [f"o{i}" for i in range(n_objects)]
-
-            concepts_df = csp.mine_concepts(
-                df,
-                min_support=min_support / n_objects,
-                to_compute=["extent", "intent"],
-            )
-
-            candidates: List[Dict] = []
-            for _, row in concepts_df.iterrows():
-                obj_names = row["extent"]
-                extent_set = frozenset(int(fn[1:]) for fn in obj_names)
-
-                intent_names: set = row["intent"]
-                intent_mask = np.array(
-                    [name in intent_names for name in col_names], dtype=bool
+            if isinstance(estimator, type):
+                raise TypeError(
+                    "Cannot clone object. "
+                    "You should provide an instance of "
+                    "scikit-learn estimator instead of a class."
+                )
+            else:
+                raise TypeError(
+                    "Cannot clone object '%s' (type %s): "
+                    "it does not seem to be a scikit-learn "
+                    "estimator as it does not implement a "
+                    "'get_params' method." % (repr(estimator), type(estimator))
                 )
 
-                support = _intent_run_support(intent_mask, attrs)
-                size = len(extent_set)
+    klass = estimator.__class__
+    new_object_params = estimator.get_params(deep=False)
+    for name, param in new_object_params.items():
+        new_object_params[name] = clone(param, safe=False)
 
-                if support >= min_support and size >= self.min_extent_size:
-                    candidates.append(
-                        {
-                            "extent": extent_set,
-                            "intent_mask": intent_mask,
-                            "support": support,
-                            "size": size,
-                        }
-                    )
-            return candidates
+    new_object = klass(**new_object_params)
+    try:
+        new_object._metadata_request = copy.deepcopy(estimator._metadata_request)
+    except AttributeError:
+        pass
 
-        except Exception as e:
-            warnings.warn(
-                f"caspailleur failed ({e}); falling back to CbO approach."
-            )
-            return self._mine_concepts_cbo(context, attrs, min_support, n_objects)
+    params_set = new_object.get_params(deep=False)
 
-    def _extract_antichain(
-        self,
-        candidates: List[Dict],
-        n_objects: int,
-    ) -> Tuple[List[Dict], np.ndarray]:
-        covered_mask = np.zeros(n_objects, dtype=bool)
-        antichain: List[Dict] = []
-
-        for concept in candidates:
-            extent = concept["extent"]
-            uncovered = frozenset(obj for obj in extent if not covered_mask[obj])
-            if not uncovered:
-                continue
-            if len(uncovered) < self.min_extent_size:
-                continue
-
-            antichain.append(
-                {
-                    "extent": uncovered,
-                    "support": concept["support"],
-                    "intent_mask": concept["intent_mask"],
-                    "size": len(uncovered),
-                }
-            )
-            for f in uncovered:
-                covered_mask[f] = True
-
-        return antichain, covered_mask
-
-    def _assign_labels(
-        self,
-        antichain: List[Dict],
-        covered_mask: np.ndarray,
-        n_objects: int,
-        context: np.ndarray,
-    ) -> np.ndarray:
-        labels = np.full(n_objects, -1, dtype=int)
-
-        for cluster_id, concept in enumerate(antichain):
-            for f in concept["extent"]:
-                labels[f] = cluster_id
-
-        uncovered = np.where(labels == -1)[0]
-        if uncovered.size > 0:
-            if not antichain:
-                labels[:] = 0
-                return labels
-
-            concept_intent = np.vstack(
-                [c["intent_mask"].astype(float) for c in antichain]
+    for name in new_object_params:
+        param1 = new_object_params[name]
+        param2 = params_set[name]
+        if param1 is not param2:
+            raise RuntimeError(
+                "Cannot clone object %s, as the constructor "
+                "either does not set or modifies parameter %s" % (estimator, name)
             )
 
-            for i in uncovered:
-                row = context[i].astype(float)
-                overlaps = concept_intent @ row
-                labels[i] = int(np.argmax(overlaps))
+    if hasattr(estimator, "_sklearn_output_config"):
+        new_object._sklearn_output_config = copy.deepcopy(
+            estimator._sklearn_output_config
+        )
+    return new_object
 
-        return labels
 
-    def describe_antichain(self) -> str:
-        if self.antichain_ is None:
-            return "FCAConsensus not yet fitted."
-        lines = [f"FCA-Consensus antichain ({len(self.antichain_)} clusters):"]
-        for k, c in enumerate(self.antichain_):
-            objs = sorted(c["extent"])
-            lines.append(
-                f"  Cluster {k}: {len(objs)} objects, "
-                f"support={c['support']}/{self.n_runs_} runs  "
-                f"[objects: {objs[:8]}{'...' if len(objs) > 8 else ''}]"
+class BaseEstimator(ReprHTMLMixin, _HTMLDocumentationLinkMixin, _MetadataRequester):
+
+    def __dir__(self):
+        # Filters conditional methods that should be hidden based
+        # on the `available_if` decorator
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning)
+            return [attr for attr in super().__dir__() if hasattr(self, attr)]
+
+    _html_repr = estimator_html_repr
+
+    @classmethod
+    def _get_param_names(cls):
+        init = getattr(cls.__init__, "deprecated_original", cls.__init__)
+        if init is object.__init__:
+            return []
+
+        init_signature = inspect.signature(init)
+        parameters = [
+            p
+            for p in init_signature.parameters.values()
+            if p.name != "self" and p.kind != p.VAR_KEYWORD
+        ]
+        for p in parameters:
+            if p.kind == p.VAR_POSITIONAL:
+                raise RuntimeError(
+                    "scikit-learn estimators should always "
+                    "specify their parameters in the signature"
+                    " of their __init__ (no varargs)."
+                    " %s with constructor %s doesn't "
+                    " follow this convention." % (cls, init_signature)
+                )
+        return sorted([p.name for p in parameters])
+
+    def get_params(self, deep=True):
+        out = dict()
+        for key in self._get_param_names():
+            value = getattr(self, key)
+            if deep and hasattr(value, "get_params") and not isinstance(value, type):
+                deep_items = value.get_params().items()
+                out.update((key + "__" + k, val) for k, val in deep_items)
+            out[key] = value
+        return out
+
+    def _get_params_html(self, deep=True, doc_link=""):
+        out = self.get_params(deep=deep)
+
+        init_func = getattr(self.__init__, "deprecated_original", self.__init__)
+        init_default_params = inspect.signature(init_func).parameters
+        init_default_params = {
+            name: param.default for name, param in init_default_params.items()
+        }
+
+        def is_non_default(param_name, param_value):
+            """Finds the parameters that have been set by the user."""
+            if param_name not in init_default_params:
+                return True
+            if init_default_params[param_name] == inspect._empty:
+                return True
+            if isinstance(param_value, BaseEstimator) and type(param_value) is not type(
+                init_default_params[param_name]
+            ):
+                return True
+            if is_pandas_na(param_value) and not is_pandas_na(
+                init_default_params[param_name]
+            ):
+                return True
+            if not np.array_equal(
+                param_value, init_default_params[param_name]
+            ) and not (
+                is_scalar_nan(init_default_params[param_name])
+                and is_scalar_nan(param_value)
+            ):
+                return True
+
+            return False
+
+        remaining_params = [name for name in out if name not in init_default_params]
+        ordered_out = {name: out[name] for name in init_default_params if name in out}
+        ordered_out.update({name: out[name] for name in remaining_params})
+
+        non_default_ls = tuple(
+            [name for name, value in ordered_out.items() if is_non_default(name, value)]
+        )
+
+        return ParamsDict(
+            params=ordered_out,
+            non_default=non_default_ls,
+            estimator_class=self.__class__,
+            doc_link=doc_link,
+        )
+
+    def set_params(self, **params):
+        if not params:
+            return self
+        valid_params = self.get_params(deep=True)
+
+        nested_params = defaultdict(dict)
+        for key, value in params.items():
+            key, delim, sub_key = key.partition("__")
+            if key not in valid_params:
+                local_valid_params = self._get_param_names()
+                raise ValueError(
+                    f"Invalid parameter {key!r} for estimator {self}. "
+                    f"Valid parameters are: {local_valid_params!r}."
+                )
+
+            if delim:
+                nested_params[key][sub_key] = value
+            else:
+                setattr(self, key, value)
+                valid_params[key] = value
+
+        for key, sub_params in nested_params.items():
+            valid_params[key].set_params(**sub_params)
+
+        return self
+
+    def __sklearn_clone__(self):
+        return _clone_parametrized(self)
+
+    def __repr__(self, N_CHAR_MAX=700):
+        from sklearn.utils._pprint import _EstimatorPrettyPrinter
+
+        N_MAX_ELEMENTS_TO_SHOW = 30
+
+        pp = _EstimatorPrettyPrinter(
+            compact=True,
+            indent=1,
+            indent_at_name=True,
+            n_max_elements_to_show=N_MAX_ELEMENTS_TO_SHOW,
+        )
+
+        repr_ = pp.pformat(self)
+
+        n_nonblank = len("".join(repr_.split()))
+        if n_nonblank > N_CHAR_MAX:
+            lim = N_CHAR_MAX // 2 
+            regex = r"^(\s*\S){%d}" % lim
+            left_lim = re.match(regex, repr_).end()
+            right_lim = re.match(regex, repr_[::-1]).end()
+
+            if "\n" in repr_[left_lim:-right_lim]:
+                regex += r"[^\n]*\n"
+                right_lim = re.match(regex, repr_[::-1]).end()
+
+            ellipsis = "..."
+            if left_lim + len(ellipsis) < len(repr_) - right_lim:
+                repr_ = repr_[:left_lim] + "..." + repr_[-right_lim:]
+
+        return repr_
+
+    def __getstate__(self):
+        if getattr(self, "__slots__", None):
+            raise TypeError(
+                "You cannot use `__slots__` in objects inheriting from "
+                "`sklearn.base.BaseEstimator`."
             )
-        return "\n".join(lines)
+
+        try:
+            state = super().__getstate__()
+            if state is None:
+                state = self.__dict__.copy()
+        except AttributeError:
+            state = self.__dict__.copy()
+
+        if type(self).__module__.startswith("sklearn."):
+            return dict(state.items(), _sklearn_version=__version__)
+        else:
+            return state
+
+    def __setstate__(self, state):
+        if type(self).__module__.startswith("sklearn."):
+            pickle_version = state.pop("_sklearn_version", "pre-0.18")
+            if pickle_version != __version__:
+                warnings.warn(
+                    InconsistentVersionWarning(
+                        estimator_name=self.__class__.__name__,
+                        current_sklearn_version=__version__,
+                        original_sklearn_version=pickle_version,
+                    ),
+                )
+        try:
+            super().__setstate__(state)
+        except AttributeError:
+            self.__dict__.update(state)
+
+    def __sklearn_tags__(self):
+        return Tags(
+            estimator_type=None,
+            target_tags=TargetTags(required=False),
+            transformer_tags=None,
+            regressor_tags=None,
+            classifier_tags=None,
+        )
+
+    def _validate_params(self):
+        validate_parameter_constraints(
+            self._parameter_constraints,
+            self.get_params(deep=False),
+            caller_name=self.__class__.__name__,
+        )
 
 
-__all__ = ["FCAConsensus"]
+class ClassifierMixin:
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.estimator_type = "classifier"
+        tags.classifier_tags = ClassifierTags()
+        tags.target_tags.required = True
+        return tags
+
+    def score(self, X, y, sample_weight=None):
+
+        from sklearn.metrics import accuracy_score
+
+        return accuracy_score(y, self.predict(X), sample_weight=sample_weight)
+
+
+class RegressorMixin:
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.estimator_type = "regressor"
+        tags.regressor_tags = RegressorTags()
+        tags.target_tags.required = True
+        return tags
+
+    def score(self, X, y, sample_weight=None):
+
+        from sklearn.metrics import r2_score
+
+        y_pred = self.predict(X)
+        return r2_score(y, y_pred, sample_weight=sample_weight)
+
+
+class ClusterMixin:
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.estimator_type = "clusterer"
+        if tags.transformer_tags is not None:
+            tags.transformer_tags.preserves_dtype = []
+        return tags
+
+    def fit_predict(self, X, y=None, **kwargs):
+
+        self.fit(X, **kwargs)
+        return self.labels_
+
+
+class BiclusterMixin:
+
+    @property
+    def biclusters_(self):
+        return self.rows_, self.columns_
+
+    def get_indices(self, i):
+        rows = self.rows_[i]
+        columns = self.columns_[i]
+        return np.nonzero(rows)[0], np.nonzero(columns)[0]
+
+    def get_shape(self, i):
+        indices = self.get_indices(i)
+        return tuple(len(i) for i in indices)
+
+    def get_submatrix(self, i, data):
+        data = check_array(data, accept_sparse="csr")
+        row_ind, col_ind = self.get_indices(i)
+        return data[row_ind[:, np.newaxis], col_ind]
+
+
+class TransformerMixin(_SetOutputMixin):
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.transformer_tags = TransformerTags()
+        return tags
+
+    def fit_transform(self, X, y=None, **fit_params):
+        if _routing_enabled():
+            transform_params = self.get_metadata_routing().consumes(
+                method="transform", params=fit_params.keys()
+            )
+            if transform_params:
+                warnings.warn(
+                    (
+                        f"This object ({self.__class__.__name__}) has a `transform`"
+                        " method which consumes metadata, but `fit_transform` does not"
+                        " forward metadata to `transform`. Please implement a custom"
+                        " `fit_transform` method to forward metadata to `transform` as"
+                        " well. Alternatively, you can explicitly do"
+                        " `set_transform_request`and set all values to `False` to"
+                        " disable metadata routed to `transform`, if that's an option."
+                    ),
+                    UserWarning,
+                )
+
+        if y is None:
+            return self.fit(X, **fit_params).transform(X)
+        else:
+            return self.fit(X, y, **fit_params).transform(X)
+
+
+class OneToOneFeatureMixin:
+
+    def get_feature_names_out(self, input_features=None):
+        check_is_fitted(self, attributes="n_features_in_")
+        return _check_feature_names_in(self, input_features)
+
+
+class ClassNamePrefixFeaturesOutMixin:
+
+    def get_feature_names_out(self, input_features=None):
+        check_is_fitted(self, "_n_features_out")
+        return _generate_get_feature_names_out(
+            self, self._n_features_out, input_features=input_features
+        )
+
+
+class DensityMixin:
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.estimator_type = "density_estimator"
+        return tags
+
+    def score(self, X, y=None):
+        pass
+
+
+class OutlierMixin:
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.estimator_type = "outlier_detector"
+        return tags
+
+    def fit_predict(self, X, y=None, **kwargs):
+        if _routing_enabled():
+            transform_params = self.get_metadata_routing().consumes(
+                method="predict", params=kwargs.keys()
+            )
+            if transform_params:
+                warnings.warn(
+                    (
+                        f"This object ({self.__class__.__name__}) has a `predict` "
+                        "method which consumes metadata, but `fit_predict` does not "
+                        "forward metadata to `predict`. Please implement a custom "
+                        "`fit_predict` method to forward metadata to `predict` as well."
+                        "Alternatively, you can explicitly do `set_predict_request`"
+                        "and set all values to `False` to disable metadata routed to "
+                        "`predict`, if that's an option."
+                    ),
+                    UserWarning,
+                )
+
+        return self.fit(X, **kwargs).predict(X)
+
+
+class MetaEstimatorMixin:
+    """Mixin class for all meta estimators in scikit-learn.
+
+    This mixin is empty, and only exists to indicate that the estimator is a
+    meta-estimator.
+
+    """
+
+
+class MultiOutputMixin:
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.target_tags.multi_output = True
+        return tags
+
+
+class _UnstableArchMixin:
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.non_deterministic = _IS_32BIT or platform.machine().startswith(
+            ("ppc", "powerpc")
+        )
+        return tags
+
+
+def is_classifier(estimator):
+    return get_tags(estimator).estimator_type == "classifier"
+
+
+def is_regressor(estimator):
+    return get_tags(estimator).estimator_type == "regressor"
+
+
+def is_clusterer(estimator):
+    return get_tags(estimator).estimator_type == "clusterer"
+
+
+def is_outlier_detector(estimator):
+    return get_tags(estimator).estimator_type == "outlier_detector"
+
+
+def _fit_context(*, prefer_skip_nested_validation):
+
+    def decorator(fit_method):
+        @functools.wraps(fit_method)
+        def wrapper(estimator, *args, **kwargs):
+            global_skip_validation = get_config()["skip_parameter_validation"]
+
+            partial_fit_and_fitted = (
+                fit_method.__name__ == "partial_fit" and _is_fitted(estimator)
+            )
+
+            if not global_skip_validation and not partial_fit_and_fitted:
+                estimator._validate_params()
+
+            with config_context(
+                skip_parameter_validation=(
+                    prefer_skip_nested_validation or global_skip_validation
+                )
+            ):
+                return fit_method(estimator, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
