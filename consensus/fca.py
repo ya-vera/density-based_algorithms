@@ -1,523 +1,306 @@
-import copy
-import functools
-import inspect
-import platform
-import re
+from __future__ import annotations
+
+import math
 import warnings
-from collections import defaultdict
+from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
 
 import numpy as np
 
-from sklearn import __version__
-from sklearn._config import config_context, get_config
-from sklearn.exceptions import InconsistentVersionWarning
-from sklearn.utils._metadata_requests import _MetadataRequester, _routing_enabled
-from sklearn.utils._missing import is_pandas_na, is_scalar_nan
-from sklearn.utils._param_validation import validate_parameter_constraints
-from sklearn.utils._repr_html.base import ReprHTMLMixin, _HTMLDocumentationLinkMixin
-from sklearn.utils._repr_html.estimator import estimator_html_repr
-from sklearn.utils._repr_html.params import ParamsDict
-from sklearn.utils._set_output import _SetOutputMixin
-from sklearn.utils._tags import (
-    ClassifierTags,
-    RegressorTags,
-    Tags,
-    TargetTags,
-    TransformerTags,
-    get_tags,
-)
-from sklearn.utils.fixes import _IS_32BIT
-from sklearn.utils.validation import (
-    _check_feature_names_in,
-    _generate_get_feature_names_out,
-    _is_fitted,
-    check_array,
-    check_is_fitted,
-)
+from .base import AbstractConsensus
 
 
-def clone(estimator, *, safe=True):
-    if hasattr(estimator, "__sklearn_clone__") and not inspect.isclass(estimator):
-        return estimator.__sklearn_clone__()
-    return _clone_parametrized(estimator, safe=safe)
+def _ensure_skmine_sklearn_validate_shim() -> None:
+    from sklearn import base as sklearn_base
+    from sklearn.utils import validation as skl_val
+
+    if hasattr(sklearn_base.BaseEstimator, "_validate_data"):
+        return
+
+    _KW_RENAME = {"force_all_finite": "ensure_all_finite"}
+
+    def _validate_data(
+        self,
+        X,
+        y=None,
+        reset=True,
+        validate_separately=False,
+        skip_check_array=False,
+        **check_params,
+    ):
+        for old, new in _KW_RENAME.items():
+            if old in check_params and new not in check_params:
+                check_params[new] = check_params.pop(old)
+            elif old in check_params:
+                check_params.pop(old)
+        y_kw = "no_validation" if y is None else y
+        return skl_val.validate_data(
+            self,
+            X=X,
+            y=y_kw,
+            reset=reset,
+            validate_separately=validate_separately,
+            skip_check_array=skip_check_array,
+            **check_params,
+        )
+
+    sklearn_base.BaseEstimator._validate_data = _validate_data
 
 
-def _clone_parametrized(estimator, *, safe=True):
+def _build_context_df(
+    label_matrix: np.ndarray,
+    noise_label: int = -1,
+):
+    import pandas as pd
 
-    estimator_type = type(estimator)
-    if estimator_type is dict:
-        return {k: clone(v, safe=safe) for k, v in estimator.items()}
-    elif estimator_type in (list, tuple, set, frozenset):
-        return estimator_type([clone(e, safe=safe) for e in estimator])
-    elif not hasattr(estimator, "get_params") or isinstance(estimator, type):
-        if not safe:
-            return copy.deepcopy(estimator)
-        else:
-            if isinstance(estimator, type):
-                raise TypeError(
-                    "Cannot clone object. "
-                    "You should provide an instance of "
-                    "scikit-learn estimator instead of a class."
-                )
-            else:
-                raise TypeError(
-                    "Cannot clone object '%s' (type %s): "
-                    "it does not seem to be a scikit-learn "
-                    "estimator as it does not implement a "
-                    "'get_params' method." % (repr(estimator), type(estimator))
-                )
+    n_runs, n_objects = label_matrix.shape
+    col_names: List[str] = []
+    col_arrays: List[np.ndarray] = []
 
-    klass = estimator.__class__
-    new_object_params = estimator.get_params(deep=False)
-    for name, param in new_object_params.items():
-        new_object_params[name] = clone(param, safe=False)
+    for t in range(n_runs):
+        row = label_matrix[t]
+        for c in sorted(set(row[row != noise_label].tolist())):
+            col_names.append(f"r{t}_c{c}")
+            col_arrays.append(row == c)
 
-    new_object = klass(**new_object_params)
-    try:
-        new_object._metadata_request = copy.deepcopy(estimator._metadata_request)
-    except AttributeError:
-        pass
+    if not col_arrays:
+        return pd.DataFrame(
+            np.zeros((n_objects, 1), dtype=bool),
+            index=[f"o{i}" for i in range(n_objects)],
+            columns=["r0_c0"],
+        )
 
-    params_set = new_object.get_params(deep=False)
+    data = np.column_stack(col_arrays)
+    return pd.DataFrame(
+        data,
+        index=[f"o{i}" for i in range(n_objects)],
+        columns=col_names,
+    )
 
-    for name in new_object_params:
-        param1 = new_object_params[name]
-        param2 = params_set[name]
-        if param1 is not param2:
-            raise RuntimeError(
-                "Cannot clone object %s, as the constructor "
-                "either does not set or modifies parameter %s" % (estimator, name)
+
+def _attr_run_support(intent_names: frozenset, n_runs: int) -> int:
+    runs = set()
+    for name in intent_names:
+        t_str = name.split("_")[0][1:]
+        runs.add(t_str)
+    return len(runs)
+
+
+class FCAConsensus(AbstractConsensus):
+    name = "fca"
+
+    def __init__(
+        self,
+        base_algorithms: Optional[List[Callable[[np.ndarray], np.ndarray]]] = None,
+        min_support_frac: float = 0.5,
+        min_extent_size: int = 1,
+        greedy_order: str = "size_desc",
+        noise_label: int = -1,
+        min_delta_stability: Optional[float] = None,
+        n_stable_concepts: Optional[int] = None,
+    ) -> None:
+        self.base_algorithms = base_algorithms or []
+        self.min_support_frac = float(min_support_frac)
+        self.min_extent_size = int(min_extent_size)
+        self.greedy_order = greedy_order
+        self.noise_label = noise_label
+        self.min_delta_stability = min_delta_stability
+        self.n_stable_concepts = n_stable_concepts
+
+        self.labels_: Optional[np.ndarray] = None
+        self.antichain_: Optional[List[Dict]] = None
+        self.context_df_ = None
+        self.concepts_df_ = None
+        self.label_matrix_: Optional[np.ndarray] = None
+        self.n_runs_: int = 0
+
+    def fit_from_labels(self, label_matrix: np.ndarray) -> "FCAConsensus":
+        from caspailleur.api import mine_concepts
+
+        _ensure_skmine_sklearn_validate_shim()
+
+        self.label_matrix_ = label_matrix
+        self.n_runs_ = label_matrix.shape[0]
+        n_objects = label_matrix.shape[1]
+
+        min_support_abs = max(1, math.ceil(self.min_support_frac * self.n_runs_))
+
+        df = _build_context_df(label_matrix, noise_label=self.noise_label)
+        self.context_df_ = df
+
+        to_compute = ["extent", "intent", "support"]
+        mine_kwargs: Dict = dict(
+            min_support=min_support_abs / n_objects,
+            to_compute=to_compute,
+        )
+        if self.min_delta_stability is not None:
+            mine_kwargs["min_delta_stability"] = self.min_delta_stability
+            if "delta_stability" not in to_compute:
+                mine_kwargs["to_compute"] = to_compute + ["delta_stability"]
+        if self.n_stable_concepts is not None:
+            mine_kwargs["n_stable_concepts"] = self.n_stable_concepts
+
+        try:
+            concepts_df = mine_concepts(df, **mine_kwargs)
+        except Exception as exc:
+            warnings.warn(
+                f"FCAConsensus: mine_concepts (caspailleur) failed ({exc}). "
+                "Falling back to single-cluster assignment."
+            )
+            self.labels_ = np.zeros(n_objects, dtype=int)
+            self.antichain_ = []
+            return self
+
+        self.concepts_df_ = concepts_df
+
+        candidates: List[Dict] = []
+        for _, row in concepts_df.iterrows():
+            extent_names: frozenset = row["extent"]
+            intent_names: frozenset = row["intent"]
+
+            extent_ints = frozenset(int(name[1:]) for name in extent_names)
+
+            run_support = _attr_run_support(intent_names, self.n_runs_)
+            size = len(extent_ints)
+
+            if run_support < min_support_abs:
+                continue
+            if size < self.min_extent_size:
+                continue
+
+            candidates.append(
+                {
+                    "extent": extent_ints,
+                    "intent_names": intent_names,
+                    "run_support": run_support,
+                    "size": size,
+                    "lib_support": int(row["support"]) if "support" in row else size,
+                }
             )
 
-    if hasattr(estimator, "_sklearn_output_config"):
-        new_object._sklearn_output_config = copy.deepcopy(
-            estimator._sklearn_output_config
-        )
-    return new_object
+        if self.greedy_order == "support_desc":
+            candidates.sort(key=lambda c: (-c["run_support"], -c["size"]))
+        elif self.greedy_order == "natural":
+            pass
+        else:
+            candidates.sort(key=lambda c: (-c["size"], -c["run_support"]))
 
+        antichain, covered_mask = self._extract_antichain(candidates, n_objects)
+        self.antichain_ = antichain
 
-class BaseEstimator(ReprHTMLMixin, _HTMLDocumentationLinkMixin, _MetadataRequester):
-
-    def __dir__(self):
-        # Filters conditional methods that should be hidden based
-        # on the `available_if` decorator
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=FutureWarning)
-            return [attr for attr in super().__dir__() if hasattr(self, attr)]
-
-    _html_repr = estimator_html_repr
-
-    @classmethod
-    def _get_param_names(cls):
-        init = getattr(cls.__init__, "deprecated_original", cls.__init__)
-        if init is object.__init__:
-            return []
-
-        init_signature = inspect.signature(init)
-        parameters = [
-            p
-            for p in init_signature.parameters.values()
-            if p.name != "self" and p.kind != p.VAR_KEYWORD
-        ]
-        for p in parameters:
-            if p.kind == p.VAR_POSITIONAL:
-                raise RuntimeError(
-                    "scikit-learn estimators should always "
-                    "specify their parameters in the signature"
-                    " of their __init__ (no varargs)."
-                    " %s with constructor %s doesn't "
-                    " follow this convention." % (cls, init_signature)
-                )
-        return sorted([p.name for p in parameters])
-
-    def get_params(self, deep=True):
-        out = dict()
-        for key in self._get_param_names():
-            value = getattr(self, key)
-            if deep and hasattr(value, "get_params") and not isinstance(value, type):
-                deep_items = value.get_params().items()
-                out.update((key + "__" + k, val) for k, val in deep_items)
-            out[key] = value
-        return out
-
-    def _get_params_html(self, deep=True, doc_link=""):
-        out = self.get_params(deep=deep)
-
-        init_func = getattr(self.__init__, "deprecated_original", self.__init__)
-        init_default_params = inspect.signature(init_func).parameters
-        init_default_params = {
-            name: param.default for name, param in init_default_params.items()
-        }
-
-        def is_non_default(param_name, param_value):
-            """Finds the parameters that have been set by the user."""
-            if param_name not in init_default_params:
-                return True
-            if init_default_params[param_name] == inspect._empty:
-                return True
-            if isinstance(param_value, BaseEstimator) and type(param_value) is not type(
-                init_default_params[param_name]
-            ):
-                return True
-            if is_pandas_na(param_value) and not is_pandas_na(
-                init_default_params[param_name]
-            ):
-                return True
-            if not np.array_equal(
-                param_value, init_default_params[param_name]
-            ) and not (
-                is_scalar_nan(init_default_params[param_name])
-                and is_scalar_nan(param_value)
-            ):
-                return True
-
-            return False
-
-        remaining_params = [name for name in out if name not in init_default_params]
-        ordered_out = {name: out[name] for name in init_default_params if name in out}
-        ordered_out.update({name: out[name] for name in remaining_params})
-
-        non_default_ls = tuple(
-            [name for name, value in ordered_out.items() if is_non_default(name, value)]
-        )
-
-        return ParamsDict(
-            params=ordered_out,
-            non_default=non_default_ls,
-            estimator_class=self.__class__,
-            doc_link=doc_link,
-        )
-
-    def set_params(self, **params):
-        if not params:
-            return self
-        valid_params = self.get_params(deep=True)
-
-        nested_params = defaultdict(dict)
-        for key, value in params.items():
-            key, delim, sub_key = key.partition("__")
-            if key not in valid_params:
-                local_valid_params = self._get_param_names()
-                raise ValueError(
-                    f"Invalid parameter {key!r} for estimator {self}. "
-                    f"Valid parameters are: {local_valid_params!r}."
-                )
-
-            if delim:
-                nested_params[key][sub_key] = value
-            else:
-                setattr(self, key, value)
-                valid_params[key] = value
-
-        for key, sub_params in nested_params.items():
-            valid_params[key].set_params(**sub_params)
-
+        self.labels_ = self._assign_labels(antichain, covered_mask, n_objects)
         return self
 
-    def __sklearn_clone__(self):
-        return _clone_parametrized(self)
-
-    def __repr__(self, N_CHAR_MAX=700):
-        from sklearn.utils._pprint import _EstimatorPrettyPrinter
-
-        N_MAX_ELEMENTS_TO_SHOW = 30
-
-        pp = _EstimatorPrettyPrinter(
-            compact=True,
-            indent=1,
-            indent_at_name=True,
-            n_max_elements_to_show=N_MAX_ELEMENTS_TO_SHOW,
-        )
-
-        repr_ = pp.pformat(self)
-
-        n_nonblank = len("".join(repr_.split()))
-        if n_nonblank > N_CHAR_MAX:
-            lim = N_CHAR_MAX // 2 
-            regex = r"^(\s*\S){%d}" % lim
-            left_lim = re.match(regex, repr_).end()
-            right_lim = re.match(regex, repr_[::-1]).end()
-
-            if "\n" in repr_[left_lim:-right_lim]:
-                regex += r"[^\n]*\n"
-                right_lim = re.match(regex, repr_[::-1]).end()
-
-            ellipsis = "..."
-            if left_lim + len(ellipsis) < len(repr_) - right_lim:
-                repr_ = repr_[:left_lim] + "..." + repr_[-right_lim:]
-
-        return repr_
-
-    def __getstate__(self):
-        if getattr(self, "__slots__", None):
-            raise TypeError(
-                "You cannot use `__slots__` in objects inheriting from "
-                "`sklearn.base.BaseEstimator`."
+    def fit(self, X: np.ndarray) -> "FCAConsensus":
+        if not self.base_algorithms:
+            raise ValueError(
+                "base_algorithms must be provided when calling fit(X). "
+                "Alternatively, call fit_from_labels(label_matrix) directly."
             )
+        rows = []
+        for alg in self.base_algorithms:
+            try:
+                rows.append(np.asarray(alg(X), dtype=int))
+            except Exception as e:
+                warnings.warn(f"FCAConsensus: base algorithm failed: {e}")
+        if not rows:
+            self.labels_ = np.zeros(X.shape[0], dtype=int)
+            return self
+        return self.fit_from_labels(np.vstack(rows))
 
-        try:
-            state = super().__getstate__()
-            if state is None:
-                state = self.__dict__.copy()
-        except AttributeError:
-            state = self.__dict__.copy()
-
-        if type(self).__module__.startswith("sklearn."):
-            return dict(state.items(), _sklearn_version=__version__)
-        else:
-            return state
-
-    def __setstate__(self, state):
-        if type(self).__module__.startswith("sklearn."):
-            pickle_version = state.pop("_sklearn_version", "pre-0.18")
-            if pickle_version != __version__:
-                warnings.warn(
-                    InconsistentVersionWarning(
-                        estimator_name=self.__class__.__name__,
-                        current_sklearn_version=__version__,
-                        original_sklearn_version=pickle_version,
-                    ),
-                )
-        try:
-            super().__setstate__(state)
-        except AttributeError:
-            self.__dict__.update(state)
-
-    def __sklearn_tags__(self):
-        return Tags(
-            estimator_type=None,
-            target_tags=TargetTags(required=False),
-            transformer_tags=None,
-            regressor_tags=None,
-            classifier_tags=None,
-        )
-
-    def _validate_params(self):
-        validate_parameter_constraints(
-            self._parameter_constraints,
-            self.get_params(deep=False),
-            caller_name=self.__class__.__name__,
-        )
-
-
-class ClassifierMixin:
-
-    def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.estimator_type = "classifier"
-        tags.classifier_tags = ClassifierTags()
-        tags.target_tags.required = True
-        return tags
-
-    def score(self, X, y, sample_weight=None):
-
-        from sklearn.metrics import accuracy_score
-
-        return accuracy_score(y, self.predict(X), sample_weight=sample_weight)
-
-
-class RegressorMixin:
-
-    def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.estimator_type = "regressor"
-        tags.regressor_tags = RegressorTags()
-        tags.target_tags.required = True
-        return tags
-
-    def score(self, X, y, sample_weight=None):
-
-        from sklearn.metrics import r2_score
-
-        y_pred = self.predict(X)
-        return r2_score(y, y_pred, sample_weight=sample_weight)
-
-
-class ClusterMixin:
-    def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.estimator_type = "clusterer"
-        if tags.transformer_tags is not None:
-            tags.transformer_tags.preserves_dtype = []
-        return tags
-
-    def fit_predict(self, X, y=None, **kwargs):
-
-        self.fit(X, **kwargs)
+    def fit_predict(self, X: np.ndarray) -> np.ndarray:
+        self.fit(X)
         return self.labels_
 
+    def _extract_antichain(
+        self,
+        candidates: List[Dict],
+        n_objects: int,
+    ) -> Tuple[List[Dict], np.ndarray]:
+        covered_mask = np.zeros(n_objects, dtype=bool)
+        antichain: List[Dict] = []
 
-class BiclusterMixin:
+        for concept in candidates:
+            extent = concept["extent"]
+            uncovered = frozenset(obj for obj in extent if not covered_mask[obj])
+            if not uncovered:
+                continue
+            if len(uncovered) < self.min_extent_size:
+                continue
 
-    @property
-    def biclusters_(self):
-        return self.rows_, self.columns_
-
-    def get_indices(self, i):
-        rows = self.rows_[i]
-        columns = self.columns_[i]
-        return np.nonzero(rows)[0], np.nonzero(columns)[0]
-
-    def get_shape(self, i):
-        indices = self.get_indices(i)
-        return tuple(len(i) for i in indices)
-
-    def get_submatrix(self, i, data):
-        data = check_array(data, accept_sparse="csr")
-        row_ind, col_ind = self.get_indices(i)
-        return data[row_ind[:, np.newaxis], col_ind]
-
-
-class TransformerMixin(_SetOutputMixin):
-
-    def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.transformer_tags = TransformerTags()
-        return tags
-
-    def fit_transform(self, X, y=None, **fit_params):
-        if _routing_enabled():
-            transform_params = self.get_metadata_routing().consumes(
-                method="transform", params=fit_params.keys()
+            antichain.append(
+                {
+                    "extent": uncovered,
+                    "run_support": concept["run_support"],
+                    "intent_names": concept["intent_names"],
+                    "size": len(uncovered),
+                }
             )
-            if transform_params:
-                warnings.warn(
-                    (
-                        f"This object ({self.__class__.__name__}) has a `transform`"
-                        " method which consumes metadata, but `fit_transform` does not"
-                        " forward metadata to `transform`. Please implement a custom"
-                        " `fit_transform` method to forward metadata to `transform` as"
-                        " well. Alternatively, you can explicitly do"
-                        " `set_transform_request`and set all values to `False` to"
-                        " disable metadata routed to `transform`, if that's an option."
-                    ),
-                    UserWarning,
-                )
+            for f in uncovered:
+                covered_mask[f] = True
 
-        if y is None:
-            return self.fit(X, **fit_params).transform(X)
-        else:
-            return self.fit(X, y, **fit_params).transform(X)
+        return antichain, covered_mask
 
+    def _assign_labels(
+        self,
+        antichain: List[Dict],
+        covered_mask: np.ndarray,
+        n_objects: int,
+    ) -> np.ndarray:
+        labels = np.full(n_objects, -1, dtype=int)
 
-class OneToOneFeatureMixin:
+        for cluster_id, concept in enumerate(antichain):
+            for obj in concept["extent"]:
+                labels[obj] = cluster_id
 
-    def get_feature_names_out(self, input_features=None):
-        check_is_fitted(self, attributes="n_features_in_")
-        return _check_feature_names_in(self, input_features)
+        uncovered = np.where(labels == -1)[0]
+        if uncovered.size > 0:
+            if not antichain:
+                labels[:] = 0
+                return labels
 
+            if self.context_df_ is not None:
+                context_arr = self.context_df_.values.astype(float)
+                col_names = list(self.context_df_.columns)
+                col_index = {name: j for j, name in enumerate(col_names)}
 
-class ClassNamePrefixFeaturesOutMixin:
+                concept_vecs = np.zeros((len(antichain), len(col_names)), dtype=float)
+                for cid, concept in enumerate(antichain):
+                    for attr_name in concept["intent_names"]:
+                        if attr_name in col_index:
+                            concept_vecs[cid, col_index[attr_name]] = 1.0
 
-    def get_feature_names_out(self, input_features=None):
-        check_is_fitted(self, "_n_features_out")
-        return _generate_get_feature_names_out(
-            self, self._n_features_out, input_features=input_features
+                for i in uncovered:
+                    obj_vec = context_arr[i]
+                    overlaps = concept_vecs @ obj_vec
+                    labels[i] = int(np.argmax(overlaps))
+            else:
+                labels[uncovered] = 0
+
+        return labels
+
+    def describe_antichain(self) -> str:
+        if self.antichain_ is None:
+            return "FCAConsensus not yet fitted."
+        lines = [f"FCA-Consensus antichain ({len(self.antichain_)} clusters):"]
+        for k, c in enumerate(self.antichain_):
+            objs = sorted(c["extent"])
+            lines.append(
+                f"  Cluster {k}: {len(objs)} objects, "
+                f"run_support={c['run_support']}/{self.n_runs_} runs  "
+                f"[objects: {objs[:8]}{'...' if len(objs) > 8 else ''}]"
+            )
+        return "\n".join(lines)
+
+    def describe_concepts(self) -> str:
+        if self.concepts_df_ is None:
+            return "FCAConsensus not yet fitted (no caspailleur output)."
+        n = len(self.concepts_df_)
+        cols = list(self.concepts_df_.columns)
+        return (
+            f"caspailleur mined {n} concepts. "
+            f"Available columns: {cols}.\n"
+            f"{self.concepts_df_[['extent', 'intent']].head(5).to_string()}"
         )
 
 
-class DensityMixin:
-    def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.estimator_type = "density_estimator"
-        return tags
-
-    def score(self, X, y=None):
-        pass
-
-
-class OutlierMixin:
-    def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.estimator_type = "outlier_detector"
-        return tags
-
-    def fit_predict(self, X, y=None, **kwargs):
-        if _routing_enabled():
-            transform_params = self.get_metadata_routing().consumes(
-                method="predict", params=kwargs.keys()
-            )
-            if transform_params:
-                warnings.warn(
-                    (
-                        f"This object ({self.__class__.__name__}) has a `predict` "
-                        "method which consumes metadata, but `fit_predict` does not "
-                        "forward metadata to `predict`. Please implement a custom "
-                        "`fit_predict` method to forward metadata to `predict` as well."
-                        "Alternatively, you can explicitly do `set_predict_request`"
-                        "and set all values to `False` to disable metadata routed to "
-                        "`predict`, if that's an option."
-                    ),
-                    UserWarning,
-                )
-
-        return self.fit(X, **kwargs).predict(X)
-
-
-class MetaEstimatorMixin:
-    """Mixin class for all meta estimators in scikit-learn.
-
-    This mixin is empty, and only exists to indicate that the estimator is a
-    meta-estimator.
-
-    """
-
-
-class MultiOutputMixin:
-
-    def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.target_tags.multi_output = True
-        return tags
-
-
-class _UnstableArchMixin:
-
-    def __sklearn_tags__(self):
-        tags = super().__sklearn_tags__()
-        tags.non_deterministic = _IS_32BIT or platform.machine().startswith(
-            ("ppc", "powerpc")
-        )
-        return tags
-
-
-def is_classifier(estimator):
-    return get_tags(estimator).estimator_type == "classifier"
-
-
-def is_regressor(estimator):
-    return get_tags(estimator).estimator_type == "regressor"
-
-
-def is_clusterer(estimator):
-    return get_tags(estimator).estimator_type == "clusterer"
-
-
-def is_outlier_detector(estimator):
-    return get_tags(estimator).estimator_type == "outlier_detector"
-
-
-def _fit_context(*, prefer_skip_nested_validation):
-
-    def decorator(fit_method):
-        @functools.wraps(fit_method)
-        def wrapper(estimator, *args, **kwargs):
-            global_skip_validation = get_config()["skip_parameter_validation"]
-
-            partial_fit_and_fitted = (
-                fit_method.__name__ == "partial_fit" and _is_fitted(estimator)
-            )
-
-            if not global_skip_validation and not partial_fit_and_fitted:
-                estimator._validate_params()
-
-            with config_context(
-                skip_parameter_validation=(
-                    prefer_skip_nested_validation or global_skip_validation
-                )
-            ):
-                return fit_method(estimator, *args, **kwargs)
-
-        return wrapper
-
-    return decorator
+__all__ = ["FCAConsensus"]
