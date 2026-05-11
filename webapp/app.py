@@ -27,7 +27,7 @@ import streamlit as st
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Consensus Clustering System",
-    page_icon="🔬",
+    page_icon="C",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -39,14 +39,16 @@ st.markdown("""
 <style>
 /* ── Sidebar ─────────────────────────────── */
 [data-testid="stSidebar"] {
-    background: #1c1c2e;
+    background: linear-gradient(180deg, #1c1c2e 0%, #16213e 100%);
+    border-right: 1px solid #2e2e4e;
 }
 [data-testid="stSidebar"] * {
     color: #d4d4e8 !important;
 }
 [data-testid="stSidebar"] .stRadio [data-testid="stMarkdownContainer"] p {
-    font-size: 0.88rem;
+    font-size: 0.875rem;
     font-weight: 500;
+    letter-spacing: 0.01em;
 }
 [data-testid="stSidebar"] hr {
     border-color: #3a3a5c !important;
@@ -55,22 +57,31 @@ st.markdown("""
     background: #2a2a45 !important;
     color: #a8d8ff !important;
     font-size: 0.82rem;
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
 }
 
 /* ── Main content ────────────────────────── */
-.block-container { padding-top: 1.8rem; padding-bottom: 2rem; }
+.block-container { padding-top: 1.6rem; padding-bottom: 2.5rem; max-width: 1200px; }
 
 /* ── Metric cards ────────────────────────── */
+[data-testid="stMetric"] {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.6rem 1rem;
+}
 [data-testid="stMetricValue"] {
     font-size: 1.55rem !important;
     font-weight: 700;
     color: #1a1a2e;
 }
 [data-testid="stMetricLabel"] {
-    font-size: 0.78rem !important;
-    color: #6b7280;
+    font-size: 0.75rem !important;
+    color: #64748b;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
+    font-weight: 600;
 }
 
 /* ── Buttons ─────────────────────────────── */
@@ -80,27 +91,64 @@ st.markdown("""
     border-radius: 6px;
     font-weight: 600;
     padding: 0.45rem 1.4rem;
-    transition: background 0.2s;
+    transition: background 0.18s, box-shadow 0.18s;
+    box-shadow: 0 1px 3px rgba(67,97,238,0.25);
 }
 .stButton > button[kind="primary"]:hover {
     background: #3451d1;
+    box-shadow: 0 3px 8px rgba(67,97,238,0.35);
+}
+.stButton > button[kind="secondary"] {
+    border-radius: 6px;
+    font-weight: 500;
 }
 
 /* ── Tabs ────────────────────────────────── */
 [data-testid="stTabs"] [data-baseweb="tab"] {
-    font-size: 0.88rem;
+    font-size: 0.875rem;
     font-weight: 600;
+    letter-spacing: 0.01em;
+    margin-right: 4px;
+}
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    border-bottom: 2px solid #e2e8f0;
+    gap: 6px;
 }
 
 /* ── Section headers ─────────────────────── */
-h1 { font-size: 1.85rem !important; font-weight: 800; color: #1c1c2e; }
-h2 { font-size: 1.35rem !important; font-weight: 700; color: #1c1c2e; }
-h3 { font-size: 1.1rem !important;  font-weight: 600; color: #374151; }
+h1 { font-size: 1.8rem !important; font-weight: 800; color: #1c1c2e; letter-spacing: -0.02em; }
+h2 { font-size: 1.3rem !important; font-weight: 700; color: #1e293b; }
+h3 { font-size: 1.05rem !important; font-weight: 600; color: #374151; }
 
-/* ── Info / warning tweaks ───────────────── */
-[data-testid="stInfoBox"]    { border-radius: 6px; }
-[data-testid="stWarningBox"] { border-radius: 6px; }
-[data-testid="stSuccessBox"] { border-radius: 6px; }
+/* ── Divider ─────────────────────────────── */
+hr { border: none; border-top: 1px solid #e2e8f0; margin: 1rem 0; }
+
+/* ── DataFrames ──────────────────────────── */
+[data-testid="stDataFrame"] { border-radius: 6px; overflow: hidden; }
+
+/* ── Expanders ───────────────────────────── */
+[data-testid="stExpander"] {
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 8px !important;
+}
+[data-testid="stExpander"] summary {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+/* ── Info / warning / success tweaks ───── */
+[data-testid="stInfoBox"]    { border-radius: 6px; border-left: 4px solid #3b82f6; }
+[data-testid="stWarningBox"] { border-radius: 6px; border-left: 4px solid #f59e0b; }
+[data-testid="stSuccessBox"] { border-radius: 6px; border-left: 4px solid #10b981; }
+
+/* ── Caption ─────────────────────────────── */
+[data-testid="stCaptionContainer"] p {
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+/* ── Code blocks ─────────────────────────── */
+.stCodeBlock { border-radius: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -142,7 +190,7 @@ def _builtin_names() -> List[str]:
 
 
 def _user_names() -> List[str]:
-    return [f"👤 {n}" for n in st.session_state.user_algorithms]
+    return [f"[U] {n}" for n in st.session_state.user_algorithms]
 
 
 def _all_algorithm_names() -> List[str]:
@@ -150,8 +198,8 @@ def _all_algorithm_names() -> List[str]:
 
 
 def _resolve_algorithm(name: str):
-    if name.startswith("👤 "):
-        real = name[len("👤 "):]
+    if name.startswith("[U] "):
+        real = name[len("[U] "):]
         entry = st.session_state.user_algorithms.get(real)
         if entry is None:
             raise KeyError(f"User algorithm '{real}' not found in session.")
@@ -167,8 +215,8 @@ from consensus.monti_helpers import (
 
 
 def _build_monti2_fit_predict(choice: str, X: np.ndarray, y_true):
-    if choice.startswith("👤 "):
-        real = choice[len("👤 "):]
+    if choice.startswith("[U] "):
+        real = choice[len("[U] "):]
         entry = st.session_state.user_algorithms[real]
         ucls = entry["instance"].__class__
         params = dict(entry.get("params") or {})
@@ -271,7 +319,7 @@ def _dataset_picker(key_suffix: str = "", n_samples: int = 50):
     all_ds = _all_dataset_names()
     saved_ds = list(st.session_state.user_datasets.keys())
 
-    tabs = st.tabs(["📦 Built-in / Saved", "⬆ Upload file"])
+    tabs = st.tabs(["Built-in / Saved", "⬆ Upload file"])
 
     with tabs[0]:
         col_a, col_b = st.columns([3, 1])
@@ -331,22 +379,22 @@ def _run_benchmark(alg_name_list, n_samples=50):
 # ──────────────────────────────────────────────────────────────────────────────
 
 PAGES = [
-    "🏠 Главная",
-    "🗂 Датасеты",
-    "🤖 Мой алгоритм",
-    "🧩 Мой консенсус",
-    "📊 Сравнение алгоритмов",
-    "🔗 Консенсус-анализ",
+    "Главная",
+    "Датасеты",
+    "Мой алгоритм",
+    "Мой консенсус",
+    "Сравнение алгоритмов",
+    "Консенсус-анализ",
 ]
 
 with st.sidebar:
-    st.markdown("## 🔬 Консенсус-кластеризация")
-    st.caption("Дипломная работа · Вера Слипченко, 2026")
+    st.markdown("## Консенсус-кластеризация")
+    st.caption("Дипломная работа - Вера Слипченко, 2026")
     st.markdown("---")
     page = st.radio("Навигация", PAGES, label_visibility="collapsed")
     st.markdown("---")
 
-    with st.expander("🔧 Встроенные алгоритмы", expanded=False):
+    with st.expander("Встроенные алгоритмы", expanded=False):
         for name in BUILTIN_ALGORITHMS:
             st.markdown(f"  `{name}`")
 
@@ -354,8 +402,8 @@ with st.sidebar:
         st.markdown("**Загруженные алгоритмы:**")
         for uname in list(st.session_state.user_algorithms):
             c1, c2 = st.columns([4, 1])
-            c1.markdown(f"  👤 `{uname}`")
-            if c2.button("✕", key=f"del_{uname}", help=f"Удалить {uname}"):
+            c1.markdown(f"  `{uname}`")
+            if c2.button("x", key=f"del_{uname}", help=f"Удалить {uname}"):
                 _remove_user_algorithm(uname)
                 st.rerun()
     else:
@@ -365,8 +413,8 @@ with st.sidebar:
         st.markdown("**Загруженные методы консенсуса:**")
         for ucname in list(st.session_state.user_consensus):
             cc1, cc2 = st.columns([4, 1])
-            cc1.markdown(f"  🧩 `{ucname}`")
-            if cc2.button("✕", key=f"del_uc_{ucname}", help=f"Удалить {ucname}"):
+            cc1.markdown(f"  `{ucname}`")
+            if cc2.button("x", key=f"del_uc_{ucname}", help=f"Удалить {ucname}"):
                 _remove_user_consensus(ucname)
                 st.rerun()
 
@@ -375,8 +423,8 @@ with st.sidebar:
         st.markdown("**Сохранённые датасеты:**")
         for dsname in list(st.session_state.user_datasets):
             d1, d2 = st.columns([4, 1])
-            d1.markdown(f"  📦 `{dsname}`")
-            if d2.button("✕", key=f"del_ds_{dsname}", help=f"Удалить {dsname}"):
+            d1.markdown(f"  `{dsname}`")
+            if d2.button("x", key=f"del_ds_{dsname}", help=f"Удалить {dsname}"):
                 _delete_dataset(dsname)
                 st.rerun()
     else:
@@ -388,8 +436,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 
 if page == PAGES[0]:
-    st.title("🔬 Система тестирования алгоритмов кластеризации")
-    st.markdown("##### Консенсус-кластеризация · Дипломная работа Вера Слипченко, 2026")
+    st.title("Система тестирования алгоритмов кластеризации")
     st.markdown("---")
 
     col_l, col_r = st.columns([3, 2])
@@ -408,11 +455,11 @@ if page == PAGES[0]:
         st.markdown("""
 **Быстрый старт:**
 
-1. **🗂 Датасеты** — выбери UCI / SIPU, сгенерируй или загрузи свой
-2. **🤖 Мой алгоритм** — загрузи свой базовый алгоритм и задай параметры
-3. **🧩 Мой консенсус** — загрузи свой метод консенсуса
-4. **📊 Сравнение алгоритмов** — запусти все алгоритмы на любом датасете
-5. **🔗 Консенсус-анализ** — запусти консенсус-кластеризацию
+1. **Датасеты** — выбери UCI / SIPU, сгенерируй или загрузи свой
+2. **Мой алгоритм** — загрузи свой базовый алгоритм и задай параметры
+3. **Мой консенсус** — загрузи свой метод консенсуса
+4. **Сравнение алгоритмов** — запусти все алгоритмы на любом датасете
+5. **Консенсус-анализ** — запусти консенсус-кластеризацию
 
 **Встроенные алгоритмы:**
 
@@ -435,7 +482,7 @@ SIPU (Flame, Jain, Spiral, Aggregation, R15, D31) ·
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif page == PAGES[1]:
-    st.title("🗂 Датасеты")
+    st.title("Датасеты")
     st.markdown("Используй готовые исследовательские датасеты, генерируй синтетические или загружай свои.")
     st.markdown("---")
 
@@ -511,31 +558,31 @@ elif page == PAGES[1]:
             st.success(st.session_state.pop(_msg_key))
 
         if st.session_state.get(_conflict_key) == sname:
-            st.warning(f"⚠️ Датасет **`{sname}`** уже в системе.")
+            st.warning(f"Датасет **`{sname}`** уже в системе.")
             oc1, oc2, oc3 = st.columns([2, 2, 4])
-            if oc1.button("🔄 Перезаписать", key=f"ow_{save_key}", type="primary"):
+            if oc1.button("Перезаписать", key=f"ow_{save_key}", type="primary"):
                 _save_dataset(sname, X_p, y_p, ds_dict.get("description", ""), source="builtin")
                 st.session_state.pop(_conflict_key, None)
-                st.session_state[_msg_key] = f"✅ **{sname}** перезаписан!"
+                st.session_state[_msg_key] = f"**{sname}** перезаписан"
                 if session_clear_key:
                     st.session_state.pop(session_clear_key, None)
                 for _ck in (counter_keys or []):
                     if _ck in st.session_state:
                         st.session_state[_ck] += 1
                 st.rerun()
-            if oc2.button("✕ Отмена", key=f"cancel_{save_key}"):
+            if oc2.button("Отмена", key=f"cancel_{save_key}"):
                 st.session_state.pop(_conflict_key, None)
                 st.rerun()
         else:
             s1, s2, s3 = st.columns(3)
             with s1:
-                if st.button("💾 Сохранить в систему", key=f"save_{save_key}", type="primary"):
+                if st.button("Сохранить в систему", key=f"save_{save_key}", type="primary"):
                     if sname in st.session_state.user_datasets:
                         st.session_state[_conflict_key] = sname
                         st.rerun()
                     else:
                         _save_dataset(sname, X_p, y_p, ds_dict.get("description", ""), source="builtin")
-                        st.session_state[_msg_key] = f"✅ **{sname}** сохранён!"
+                        st.session_state[_msg_key] = f"**{sname}** сохранён"
                         if session_clear_key:
                             st.session_state.pop(session_clear_key, None)
                         for _ck in (counter_keys or []):
@@ -544,20 +591,24 @@ elif page == PAGES[1]:
                         st.rerun()
             with s2:
                 buf_x = io.BytesIO(); np.save(buf_x, X_p); buf_x.seek(0)
-                st.download_button("⬇ X (.npy)", buf_x, file_name=f"{sname}_X.npy",
+                st.download_button("X (.npy)", buf_x, file_name=f"{sname}_X.npy",
                                     key=f"dlx_{save_key}")
             with s3:
                 if y_p is not None:
                     buf_y = io.BytesIO(); np.save(buf_y, y_p); buf_y.seek(0)
-                    st.download_button("⬇ y_true (.npy)", buf_y, file_name=f"{sname}_y.npy",
+                    st.download_button("y_true (.npy)", buf_y, file_name=f"{sname}_y.npy",
                                         key=f"dly_{save_key}")
 
-    tab_builtin, tab_generate, tab_upload, tab_saved = st.tabs([
-        "📊 Готовые датасеты", "⚙️ Генерация", "⬆ Загрузить файл", "📦 Сохранённые",
-    ])
+    _ds_section = st.radio(
+        "Раздел датасетов",
+        ["Готовые датасеты", "Генерация", "Загрузить файл", "Сохранённые"],
+        horizontal=True,
+        key="ds_section_radio",
+        label_visibility="collapsed",
+    )
+    st.markdown("")
 
-    # ── Tab 1: Built-in (UCI + SIPU) ──────────────────────────────────────────
-    with tab_builtin:
+    if _ds_section == "Готовые датасеты":
         st.subheader("UCI — реальные датасеты")
         st.caption("Данные загружаются с UCI Machine Learning Repository. Параметры фиксированы.")
 
@@ -574,7 +625,7 @@ elif page == PAGES[1]:
             format_func=lambda k: f"{_UCI_META[k][0]}  ({_UCI_META[k][1]})",
             key="uci_pick",
         )
-        if st.button("🔍 Загрузить и предпросмотреть", key="uci_load", type="primary"):
+        if st.button("Загрузить и предпросмотреть", key="uci_load", type="primary"):
             with st.spinner("Загрузка…"):
                 try:
                     ds_d = load_data_generator_dataset(uci_choice)
@@ -605,7 +656,7 @@ elif page == PAGES[1]:
             format_func=lambda k: f"{_SIPU_META[k][0]}  ({_SIPU_META[k][1]})",
             key="sipu_pick",
         )
-        if st.button("🔍 Загрузить и предпросмотреть", key="sipu_load", type="primary"):
+        if st.button("Загрузить и предпросмотреть", key="sipu_load", type="primary"):
             with st.spinner("Загрузка…"):
                 try:
                     from data_generator.classic_shapes import load_sipu_shapes
@@ -620,15 +671,14 @@ elif page == PAGES[1]:
             if ds_d:
                 _preview_only(ds_d, title=_SIPU_META[sipu_choice][0])
 
-    # ── Tab 2: Generate (Gaussian + Habr) ─────────────────────────────────────
-    with tab_generate:
+    elif _ds_section == "Генерация":
         gen_type = st.radio(
             "Тип генерации",
-            ["🔵 Гауссовские кластеры (generator.py)", "🟡 Habr синтетические"],
+            ["Гауссовские кластеры (generator.py)", "Habr синтетические"],
             horizontal=True, key="gen_type_radio",
         )
 
-        if gen_type.startswith("🔵"):
+        if gen_type.startswith("Гауссовские"):
             st.subheader("Гауссовские кластеры")
             st.caption("Генерируется один датасет с заданными параметрами на основе `generator.py`.")
 
@@ -726,8 +776,7 @@ elif page == PAGES[1]:
                                   title=st.session_state["_habr_preview"].get("name", habr_choice),
                                   session_clear_key="_habr_preview")
 
-    # ── Tab 3: Upload ─────────────────────────────────────────────────────────
-    with tab_upload:
+    elif _ds_section == "Загрузить файл":
         import gzip as _gzip_up
 
         def _load_array(file, is_labels: bool = False):
@@ -777,7 +826,7 @@ elif page == PAGES[1]:
                     arr[bad, col] = col_mean if np.isfinite(col_mean) else 0.0
             return arr
 
-        up_tab_file, up_tab_uci = st.tabs(["📂 Загрузить файл", "🔗 UCI по ссылке"])
+        up_tab_file, up_tab_uci = st.tabs(["Загрузить файл", "UCI по ссылке"])
 
         with up_tab_file:
             st.caption(
@@ -815,7 +864,7 @@ elif page == PAGES[1]:
                     X_up = _load_array(up_x, is_labels=False)
                     errs, warns = _validate_X(X_up)
                     for e_msg in errs:
-                        st.error(f"❌ {e_msg}")
+                        st.error(f"{e_msg}")
                     for w_msg in warns:
                         st.warning(w_msg)
 
@@ -827,10 +876,10 @@ elif page == PAGES[1]:
                         if up_y is not None:
                             y_raw_up = _load_array(up_y, is_labels=True)
                             if y_raw_up.ndim != 1:
-                                st.error("❌ Файл меток должен быть одномерным вектором (n_samples,).")
+                                st.error("Файл меток должен быть одномерным вектором (n_samples,).")
                                 _y_ok = False
                             elif len(y_raw_up) != X_up.shape[0]:
-                                st.error(f"❌ Число меток ({len(y_raw_up)}) не совпадает с числом объектов X ({X_up.shape[0]}).")
+                                st.error(f"Число меток ({len(y_raw_up)}) не совпадает с числом объектов X ({X_up.shape[0]}).")
                                 _y_ok = False
                             else:
                                 y_up = (y_raw_up - 1).astype(np.int64) if up_sipu else y_raw_up.astype(np.int64)
@@ -847,19 +896,19 @@ elif page == PAGES[1]:
 
                             _in_conflict = (st.session_state.get("_up_conflict") == up_name)
                             if _in_conflict:
-                                st.warning(f"⚠️ Датасет **`{up_name}`** уже в системе.")
+                                st.warning(f"Датасет **`{up_name}`** уже в системе.")
                                 _oc1, _oc2, _oc3 = st.columns([2, 2, 4])
-                                if _oc1.button("🔄 Перезаписать", key=f"up_ow_{_ctr}", type="primary"):
+                                if _oc1.button("Перезаписать", key=f"up_ow_{_ctr}", type="primary"):
                                     _save_dataset(up_name, X_up, y_up, up_desc, source="uploaded")
                                     st.session_state["_up_conflict"] = None
                                     st.session_state["_up_file_ctr"] += 1
-                                    st.session_state[_up_msg_key] = f"✅ **{up_name}** перезаписан!"
+                                    st.session_state[_up_msg_key] = f"**{up_name}** перезаписан"
                                     st.rerun()
-                                if _oc2.button("✕ Отмена", key=f"up_cancel_{_ctr}"):
+                                if _oc2.button("Отмена", key=f"up_cancel_{_ctr}"):
                                     st.session_state["_up_conflict"] = None
                                     st.rerun()
                             else:
-                                if st.button("💾 Сохранить в систему",
+                                if st.button("Сохранить в систему",
                                              key=f"save_uploaded_ds_{_ctr}", type="primary"):
                                     if up_name in st.session_state.user_datasets:
                                         st.session_state["_up_conflict"] = up_name
@@ -867,7 +916,7 @@ elif page == PAGES[1]:
                                     else:
                                         _save_dataset(up_name, X_up, y_up, up_desc, source="uploaded")
                                         st.session_state["_up_file_ctr"] += 1
-                                        st.session_state[_up_msg_key] = f"✅ **{up_name}** сохранён!"
+                                        st.session_state[_up_msg_key] = f"**{up_name}** сохранён"
                                         st.rerun()
                 except Exception as e:
                     st.error(f"Ошибка загрузки: {e}")
@@ -895,7 +944,7 @@ elif page == PAGES[1]:
             if _uci_slug:
                 st.caption(f"Датасет будет сохранён как **`{_uci_auto_name}`**")
 
-            if st.button("⬇ Загрузить с UCI", type="primary", key=f"load_uci_url_{_uci_ctr}",
+            if st.button("Загрузить с UCI", type="primary", key=f"load_uci_url_{_uci_ctr}",
                          disabled=not uci_url.strip()):
                 import re as _re
                 from sklearn.preprocessing import LabelEncoder as _LE
@@ -948,7 +997,7 @@ elif page == PAGES[1]:
                             _msg = str(_uci_err)
                             if "not available for import" in _msg or "exists in the repository" in _msg:
                                 st.info(
-                                    f"ℹ️ Датасет ID={ds_id} есть на UCI, но **не поддерживается Python API**. "
+                                    f"Датасет ID={ds_id} есть на UCI, но **не поддерживается Python API**. "
                                     f"Пробую загрузить через **OpenML**…"
                                 )
                                 try:
@@ -962,12 +1011,12 @@ elif page == PAGES[1]:
                                     y_oml = _pd.DataFrame({"target": oml.target}) if oml.target is not None else None
                                     X_uci_num, y_uci = _parse_uci_frame(X_oml, y_oml)
                                     meta_name = oml.details.get("name", ds_slug)
-                                    st.success(f"✅ Загружено с OpenML: **{meta_name}**")
+                                    st.success(f"Загружено с OpenML: **{meta_name}**")
                                 except Exception as _oml_err:
                                     st.error(
-                                        f"❌ Не удалось загрузить ни с UCI API, ни с OpenML.\n\n"
+                                        f"Не удалось загрузить ни с UCI API, ни с OpenML.\n\n"
                                         f"**UCI:** {_uci_err}\n\n**OpenML:** {_oml_err}\n\n"
-                                        f"Попробуй загрузить файл вручную через вкладку **📂 Загрузить файл**."
+                                        f"Попробуй загрузить файл вручную через вкладку **Загрузить файл**."
                                     )
                             else:
                                 st.error(f"Ошибка загрузки UCI: {_uci_err}")
@@ -987,16 +1036,15 @@ elif page == PAGES[1]:
                                   session_clear_key="_uci_preview",
                                   counter_keys=["_uci_url_ctr"])
 
-    # ── Tab 4: Saved ──────────────────────────────────────────────────────────
-    with tab_saved:
+    else:
         saved = st.session_state.user_datasets
         if not saved:
-            st.info("Пока нет сохранённых датасетов. Используй вкладки слева чтобы загрузить или сгенерировать.")
+            st.info("Пока нет сохранённых датасетов. Используй разделы выше чтобы загрузить или сгенерировать.")
         else:
             st.markdown(f"**{len(saved)} датасет(а/ов) в системе:**")
             for ds_name_s, meta in list(saved.items()):
                 with st.expander(
-                    f"📦 {ds_name_s}  —  {meta.get('n_samples','?')} объектов × {meta.get('n_features','?')} признаков"
+                    f"{ds_name_s}  —  {meta.get('n_samples','?')} объектов × {meta.get('n_features','?')} признаков"
                 ):
                     st.markdown(f"**Описание:** {meta.get('description','—')}")
                     st.markdown(f"**Источник:** {meta.get('source','—')}")
@@ -1005,24 +1053,24 @@ elif page == PAGES[1]:
                     with dc1:
                         buf = io.BytesIO()
                         np.save(buf, meta["X"]); buf.seek(0)
-                        st.download_button("⬇ X (.npy)", buf,
+                        st.download_button("X (.npy)", buf,
                                            file_name=f"{ds_name_s}_X.npy",
                                            key=f"dl_x_{ds_name_s}")
                     with dc2:
                         if meta.get("y_true") is not None:
                             buf2 = io.BytesIO()
                             np.save(buf2, meta["y_true"]); buf2.seek(0)
-                            st.download_button("⬇ y (.npy)", buf2,
+                            st.download_button("y (.npy)", buf2,
                                                file_name=f"{ds_name_s}_y.npy",
                                                key=f"dl_y_{ds_name_s}")
                     with dc3:
                         csv_buf = io.StringIO()
                         np.savetxt(csv_buf, meta["X"], delimiter=",")
-                        st.download_button("⬇ X (.csv)", csv_buf.getvalue().encode(),
+                        st.download_button("X (.csv)", csv_buf.getvalue().encode(),
                                            file_name=f"{ds_name_s}_X.csv",
                                            mime="text/csv", key=f"dl_csv_{ds_name_s}")
 
-                    if st.button(f"🗑 Удалить «{ds_name_s}»", key=f"rm_ds_{ds_name_s}"):
+                    if st.button(f"Удалить «{ds_name_s}»", key=f"rm_ds_{ds_name_s}"):
                         _delete_dataset(ds_name_s)
                         st.rerun()
 
@@ -1036,7 +1084,7 @@ elif page == PAGES[2]:
     from evaluation.algorithm_tester import load_algorithm_from_file, validate_algorithm
     from evaluation.algorithm_tester import load_algorithm_from_file as _lafp
 
-    st.title("🤖 Мой алгоритм")
+    st.title("Мой алгоритм")
     st.markdown("Загрузи свой алгоритм в формате `.py`, задай параметры и сохрани в систему — он появится во всех разделах рядом со встроенными.")
     st.markdown("""
 **Интерфейс алгоритма**
@@ -1107,13 +1155,13 @@ class MyAlgorithm:
                 loaded_alg = load_algorithm_from_file(tmp_path, init_params=init_params)
                 valid, val_issues = validate_algorithm(loaded_alg)
             except Exception as e:
-                st.error(f"❌ Не удалось загрузить алгоритм: {e}")
+                st.error(f"Не удалось загрузить алгоритм: {e}")
                 _load_ok = False
 
             if _load_ok:
                 if val_issues:
                     for issue in val_issues:
-                        st.warning(f"⚠ {issue}")
+                        st.warning(f"{issue}")
                     if not valid:
                         _load_ok = False
 
@@ -1129,7 +1177,7 @@ class MyAlgorithm:
                     _unknown_kw = set(init_params.keys()) - _valid_kw
                     if _unknown_kw:
                         st.warning(
-                            f"⚠ Параметры не найдены в `__init__`: `{', '.join(_unknown_kw)}` — "
+                            f"Параметры не найдены в `__init__`: `{', '.join(_unknown_kw)}` — "
                             "они будут проигнорированы."
                         )
 
@@ -1145,7 +1193,7 @@ class MyAlgorithm:
                     elif _pp.default is not _inspect.Parameter.empty:
                         _eff_params[_pn] = (_pp.default, "по умолчанию")
 
-                st.success(f"✅ Класс **`{loaded_alg.__class__.__name__}`** загружен.")
+                st.success(f"Класс **`{loaded_alg.__class__.__name__}`** загружен.")
                 st.markdown("---")
 
                 st.subheader("Шаг 2 — Параметры")
@@ -1164,20 +1212,20 @@ class MyAlgorithm:
                 _params_to_save = init_params
 
                 if st.session_state.get(_alg_conflict_key) == alg_display_name:
-                    st.warning(f"⚠️ Алгоритм **`{alg_display_name}`** уже в системе.")
+                    st.warning(f"Алгоритм **`{alg_display_name}`** уже в системе.")
                     _ac1, _ac2, _ac3 = st.columns([2, 2, 4])
-                    if _ac1.button("🔄 Обновить", key="alg_overwrite_btn", type="primary"):
+                    if _ac1.button("Обновить", key="alg_overwrite_btn", type="primary"):
                         _save_user_algorithm(alg_display_name, loaded_alg, uploaded.name,
                                              _params_to_save, source_code=_src_bytes)
                         st.session_state[_alg_conflict_key] = None
                         st.session_state["_alg_file_ctr"] += 1
-                        st.session_state["_alg_save_msg"] = f"✅ **{alg_display_name}** обновлён!"
+                        st.session_state["_alg_save_msg"] = f"**{alg_display_name}** обновлён"
                         st.rerun()
-                    if _ac2.button("✕ Отмена", key="alg_cancel_btn"):
+                    if _ac2.button("Отмена", key="alg_cancel_btn"):
                         st.session_state[_alg_conflict_key] = None
                         st.rerun()
                 else:
-                    if st.button(f"💾 Сохранить **{alg_display_name}**", type="primary"):
+                    if st.button(f"Сохранить **{alg_display_name}**", type="primary"):
                         if alg_display_name in st.session_state.user_algorithms:
                             st.session_state[_alg_conflict_key] = alg_display_name
                             st.rerun()
@@ -1186,17 +1234,17 @@ class MyAlgorithm:
                                                  _params_to_save, source_code=_src_bytes)
                             st.session_state["_alg_file_ctr"] += 1
                             st.session_state["_alg_save_msg"] = (
-                                f"✅ **{alg_display_name}** сохранён! "
-                                "Перейди в **📊 Сравнение алгоритмов**."
+                                f"**{alg_display_name}** сохранён! "
+                                "Перейди в **Сравнение алгоритмов**."
                             )
                             st.rerun()
     else:
-        st.info("⬆️ Загрузи `.py` файл чтобы начать. Пример — `simple_test2.py` в корне проекта.")
+        st.info("Загрузи `.py` файл чтобы начать. Пример — `simple_test2.py` в корне проекта.")
 
     # ── Saved algorithms editor (always at bottom) ─────────────────────────────
     if st.session_state.user_algorithms:
         st.markdown("---")
-        st.subheader("📋 Сохранённые алгоритмы")
+        st.subheader("Сохранённые алгоритмы")
         for _sa_name, _sa_data in list(st.session_state.user_algorithms.items()):
             with st.expander(f"**{_sa_name}** — `{_sa_data.get('file_name', '')}`", expanded=False):
                 _sa_src = _sa_data.get("source_code", b"")
@@ -1210,7 +1258,7 @@ class MyAlgorithm:
                     key=f"edit_params_{_sa_name}_{_alg_ctr}",
                 )
                 _ep1, _ep2, _ep3 = st.columns([2, 2, 4])
-                if _ep1.button("💾 Применить параметры", key=f"apply_p_{_sa_name}"):
+                if _ep1.button("Применить параметры", key=f"apply_p_{_sa_name}"):
                     try:
                         _sa_new_params = json.loads(_sa_new_json) if _sa_new_json.strip() else {}
                     except json.JSONDecodeError:
@@ -1228,15 +1276,15 @@ class MyAlgorithm:
                                     _sa_new_params,
                                     source_code=_sa_src,
                                 )
-                                st.session_state["_alg_save_msg"] = f"✅ Параметры **{_sa_name}** обновлены."
+                                st.session_state["_alg_save_msg"] = f"Параметры **{_sa_name}** обновлены."
                                 st.rerun()
                             except Exception as _ep_err:
                                 st.error(f"Ошибка: {_ep_err}")
                         else:
                             st.warning("Исходный код не сохранён — перезагрузи файл для смены параметров.")
-                if _ep2.button("🗑 Удалить", key=f"del_alg_{_sa_name}", type="secondary"):
+                if _ep2.button("Удалить", key=f"del_alg_{_sa_name}", type="secondary"):
                     _remove_user_algorithm(_sa_name)
-                    st.session_state["_alg_save_msg"] = f"🗑 **{_sa_name}** удалён из системы."
+                    st.session_state["_alg_save_msg"] = f"**{_sa_name}** удалён из системы."
                     st.rerun()
 
 
@@ -1248,10 +1296,10 @@ elif page == PAGES[3]:
     import inspect as _inspect_con
     from evaluation.algorithm_tester import load_algorithm_from_file as _lafp_con, validate_algorithm as _val_con
 
-    st.title("🧩 Мой консенсус")
+    st.title("Мой консенсус")
     st.markdown(
         "Загрузи свой метод консенсуса в формате `.py`, задай параметры и сохрани — "
-        "он появится в разделе **🔗 Консенсус-анализ** рядом со встроенными методами."
+        "он появится в разделе **Консенсус-анализ** рядом со встроенными методами."
     )
     st.markdown(r"""
 **Два варианта интерфейса**
@@ -1277,13 +1325,13 @@ class MyConsensus:
         ...
 ```
 
-В **🔗 Консенсус-анализ** при запуске будет вызван только `fit_predict(X)` (результаты выбранных базовых алгоритмов в этот путь не передаются).
+В **Консенсус-анализ** при запуске будет вызван только `fit_predict(X)` (результаты выбранных базовых алгоритмов в этот путь не передаются).
 
 ---
 
 **2) Консенсус по прогонам выбранных в интерфейсе базовых алгоритмов**
 
-Если в классе есть вызываемый **`fit_from_consensus`**, система после пайплайна консенсуса передаёт туда матрицы, собранные из **встроенных** и **👤 пользовательских** базовых алгоритмов, отмеченных в мультиселекте «Базовые алгоритмы».
+Если в классе есть вызываемый **`fit_from_consensus`**, система после пайплайна консенсуса передаёт туда матрицы, собранные из **встроенных** и **[U] пользовательских** базовых алгоритмов, отмеченных в мультиселекте «Базовые алгоритмы».
 
 Обязательно: после `fit_from_consensus` задать атрибут **`labels_`** — `np.ndarray` формы `(n_samples,)`, `dtype` целочисленный.
 
@@ -1368,12 +1416,12 @@ class MyConsensus:
                 loaded_con = _lafp_con(_tmp_con_path, init_params=con_init_params)
                 _con_valid, _con_issues = _val_con(loaded_con)
             except Exception as _e_con:
-                st.error(f"❌ Не удалось загрузить метод: {_e_con}")
+                st.error(f"Не удалось загрузить метод: {_e_con}")
                 _con_load_ok = False
 
             if _con_load_ok:
                 for _issue in _con_issues:
-                    st.warning(f"⚠ {_issue}")
+                    st.warning(f"{_issue}")
                 if not _con_valid:
                     _con_load_ok = False
 
@@ -1391,7 +1439,7 @@ class MyConsensus:
                     elif _pp.default is not _inspect_con.Parameter.empty:
                         _con_eff[_pn] = (_pp.default, "по умолчанию")
 
-                st.success(f"✅ Класс **`{loaded_con.__class__.__name__}`** загружен.")
+                st.success(f"Класс **`{loaded_con.__class__.__name__}`** загружен.")
                 st.markdown("---")
 
                 st.subheader("Шаг 2 — Параметры")
@@ -1403,24 +1451,24 @@ class MyConsensus:
 
                 st.markdown("---")
                 st.subheader("Шаг 3 — Сохрани в систему")
-                st.caption("После сохранения метод появится в **🔗 Консенсус-анализ**.")
+                st.caption("После сохранения метод появится в **Консенсус-анализ**.")
 
                 _con_conflict_key = "_con_conflict"
                 if st.session_state.get(_con_conflict_key) == con_display_name:
-                    st.warning(f"⚠️ Метод **`{con_display_name}`** уже в системе.")
+                    st.warning(f"Метод **`{con_display_name}`** уже в системе.")
                     _cc1, _cc2, _cc3 = st.columns([2, 2, 4])
-                    if _cc1.button("🔄 Обновить", key="con_overwrite_btn", type="primary"):
+                    if _cc1.button("Обновить", key="con_overwrite_btn", type="primary"):
                         _save_user_consensus(con_display_name, loaded_con, uploaded_con.name,
                                              con_init_params, source_code=_con_src)
                         st.session_state[_con_conflict_key] = None
                         st.session_state["_con_file_ctr"] += 1
-                        st.session_state["_con_save_msg"] = f"✅ **{con_display_name}** обновлён!"
+                        st.session_state["_con_save_msg"] = f"**{con_display_name}** обновлён"
                         st.rerun()
-                    if _cc2.button("✕ Отмена", key="con_cancel_btn"):
+                    if _cc2.button("Отмена", key="con_cancel_btn"):
                         st.session_state[_con_conflict_key] = None
                         st.rerun()
                 else:
-                    if st.button(f"💾 Сохранить **{con_display_name}**", type="primary",
+                    if st.button(f"Сохранить **{con_display_name}**", type="primary",
                                  key="con_save_btn"):
                         if con_display_name in st.session_state.user_consensus:
                             st.session_state[_con_conflict_key] = con_display_name
@@ -1430,16 +1478,16 @@ class MyConsensus:
                                                  con_init_params, source_code=_con_src)
                             st.session_state["_con_file_ctr"] += 1
                             st.session_state["_con_save_msg"] = (
-                                f"✅ **{con_display_name}** сохранён! "
-                                "Перейди в **🔗 Консенсус-анализ**."
+                                f"**{con_display_name}** сохранён! "
+                                "Перейди в **Консенсус-анализ**."
                             )
                             st.rerun()
     else:
-        st.info("⬆️ Загрузи `.py` файл чтобы начать.")
+        st.info("Загрузи `.py` файл чтобы начать.")
 
     if st.session_state.user_consensus:
         st.markdown("---")
-        st.subheader("📋 Сохранённые методы консенсуса")
+        st.subheader("Сохранённые методы консенсуса")
         for _sc_name, _sc_data in list(st.session_state.user_consensus.items()):
             with st.expander(f"**{_sc_name}** — `{_sc_data.get('file_name', '')}`",
                              expanded=False):
@@ -1454,7 +1502,7 @@ class MyConsensus:
                     key=f"edit_con_params_{_sc_name}_{_con_ctr}",
                 )
                 _cp1, _cp2, _cp3 = st.columns([2, 2, 4])
-                if _cp1.button("💾 Применить параметры", key=f"apply_cp_{_sc_name}"):
+                if _cp1.button("Применить параметры", key=f"apply_cp_{_sc_name}"):
                     try:
                         _sc_new_params = json.loads(_sc_new_json) if _sc_new_json.strip() else {}
                     except json.JSONDecodeError:
@@ -1474,16 +1522,16 @@ class MyConsensus:
                                     _sc_new_params, source_code=_sc_src,
                                 )
                                 st.session_state["_con_save_msg"] = (
-                                    f"✅ Параметры **{_sc_name}** обновлены."
+                                    f"Параметры **{_sc_name}** обновлены."
                                 )
                                 st.rerun()
                             except Exception as _cp_err:
                                 st.error(f"Ошибка: {_cp_err}")
                         else:
                             st.warning("Исходный код не сохранён — перезагрузи файл.")
-                if _cp2.button("🗑 Удалить", key=f"del_con_{_sc_name}", type="secondary"):
+                if _cp2.button("Удалить", key=f"del_con_{_sc_name}", type="secondary"):
                     _remove_user_consensus(_sc_name)
-                    st.session_state["_con_save_msg"] = f"🗑 **{_sc_name}** удалён из системы."
+                    st.session_state["_con_save_msg"] = f"**{_sc_name}** удалён из системы."
                     st.rerun()
 
 
@@ -1502,7 +1550,7 @@ elif page == PAGES[4]:
     from sklearn.decomposition import PCA as _PCA2
     from scipy.spatial.distance import pdist as _pdist
 
-    st.title("📊 Сравнение алгоритмов")
+    st.title("Сравнение алгоритмов")
     st.markdown("---")
 
     col_alg, col_mode = st.columns([3, 2])
@@ -1515,7 +1563,7 @@ elif page == PAGES[4]:
     with col_mode:
         param_mode = st.radio(
             "Режим параметров",
-            ["🤖 Авто", "🔍 Перебор по сетке"],
+            ["Авто", "Перебор по сетке"],
             key="cmp_param_mode",
         )
 
@@ -1524,12 +1572,12 @@ elif page == PAGES[4]:
         st.stop()
 
     _MODE_CAPTIONS = {
-        "🤖 Авто": (
+        "Авто": (
             "Запускаются два варианта: внутренняя авто-логика алгоритма и параметры, "
             "вычисленные из данных (k-distance elbow, перцентили расстояний). "
             "Выбирается результат с лучшим **ARI** (если есть метки) или **Silhouette**."
         ),
-        "🔍 Перебор по сетке": (
+        "Перебор по сетке": (
             "Сетка строится вокруг рекомендуемых значений (≤40 комбинаций на алгоритм). "
             "Победитель — по **ARI** (если есть метки) или **Silhouette**. "
             "Для пользовательских алгоритмов — сохранённые параметры; если JSON пустой — "
@@ -1540,16 +1588,16 @@ elif page == PAGES[4]:
     st.markdown("---")
 
     _CMP_DS_GROUPS = {
-        "🟢 UCI реальные": {
+        "UCI реальные": {
             "uci_iris": "Iris", "uci_wine": "Wine", "uci_seeds": "Seeds",
             "uci_ecoli": "Ecoli", "uci_statlog_segment": "Segmentation",
         },
-        "🟡 Habr синтетические": {
+        "Habr синтетические": {
             "habr_numpy_linear": "Linear", "habr_numpy_timeseries": "Timeseries",
             "habr_sklearn_blobs": "Blobs", "habr_sklearn_regression_style": "Regression",
             "habr_scipy_mixed": "Mixed",
         },
-        "🟠 SIPU формы": {
+        "SIPU формы": {
             "shape_flame": "Flame", "shape_jain": "Jain", "shape_spiral": "Spiral",
             "shape_aggregation": "Aggregation", "shape_r15": "R15", "shape_d31": "D31",
         },
@@ -1630,7 +1678,8 @@ elif page == PAGES[4]:
             k_rec = max(3, min(15, int(np.log(n) * 1.5)))
             return {"k": k_rec, "min_k": max(2, k_rec // 3)}
         if alg_name == "ckdpc":
-            return {"percent": 2.0, "alpha": 0.5, "k_neighbors": 7}
+            k_nbr = max(5, min(15, int(np.log(n) * 1.5)))
+            return {"percent": 2.0, "alpha": 0.5, "k_neighbors": k_nbr}
         return {}
 
     def _score_lbl(lbl: np.ndarray, X: np.ndarray, y_true) -> float:
@@ -1709,11 +1758,11 @@ elif page == PAGES[4]:
             return {
                 "percent":    _geom_around(pct_rec, 0.3, 5.0, 6, min_v=0.5),
                 "alpha":      _geom_around(alp_rec, 0.1, 20.0, 7, min_v=0.05),
-                "k_neighbors": _int_around(kn_rec, 3, 6, min_v=3),
+                "k_neighbors": _int_around(kn_rec, 3, 3, min_v=3),
             }
         return {}
 
-    def _grid_search_for(alg_name: str, X: np.ndarray, y_true, param_grid: dict, max_combos: int = 40):
+    def _grid_search_for(alg_name: str, X: np.ndarray, y_true, param_grid: dict, max_combos: int = 80):
         reg  = _load_registry()
         cls  = reg.get(alg_name)
         keys = list(param_grid.keys())
@@ -1832,36 +1881,26 @@ elif page == PAGES[4]:
             st.dataframe(_pd.DataFrame(metric_rows).set_index("Алгоритм"), width="stretch")
         if figs_list:
             st.markdown("#### Визуализация")
-            n_alg      = len(figs_list)
-            n_cols     = 2
-            n_rows_fig = (n_alg + 1) // n_cols + 1
-            fig_all, axes_all = _plt.subplots(
-                n_rows_fig, n_cols * 2,
-                figsize=(5 * n_cols * 2, 4 * n_rows_fig),
-                constrained_layout=True,
-            )
-            axes_all = np.array(axes_all).reshape(n_rows_fig, n_cols * 2)
-            _cluster_ax(axes_all[0, 0], X_2d_cmp,
-                        y_cmp if y_cmp is not None else np.zeros(len(X_2d_cmp), dtype=int),
-                        active_label, ok01)
-            for ax_h in axes_all[0, 1:]:
-                ax_h.set_visible(False)
-            for idx, (aname, lbl) in enumerate(figs_list):
-                row_i = idx // n_cols + 1
-                col_i = idx % n_cols * 2
-                _cluster_ax(axes_all[row_i, col_i], X_2d_cmp, lbl, aname, ok01)
-                if col_i + 1 < axes_all.shape[1]:
-                    axes_all[row_i, col_i + 1].set_visible(False)
-            for rr in range(n_rows_fig):
-                for cc in range(n_cols * 2):
-                    used = (rr == 0 and cc == 0) or any(
-                        rr == idx // n_cols + 1 and cc == idx % n_cols * 2
-                        for idx in range(n_alg)
-                    )
-                    if not used:
-                        axes_all[rr, cc].set_visible(False)
-            st.pyplot(fig_all)
-            _plt.close(fig_all)
+            _gt_labels = y_cmp if y_cmp is not None else np.zeros(len(X_2d_cmp), dtype=int)
+            _, _mid, _ = st.columns([1, 2, 1])
+            with _mid:
+                _fig_gt, _ax_gt = _plt.subplots(figsize=(6, 5))
+                _cluster_ax(_ax_gt, X_2d_cmp, _gt_labels, active_label, ok01)
+                _fig_gt.tight_layout()
+                st.pyplot(_fig_gt)
+                _plt.close(_fig_gt)
+            st.markdown("")
+            n_alg = len(figs_list)
+            for _rs in range(0, n_alg, 3):
+                _row_items = figs_list[_rs:_rs + 3]
+                _row_cols = st.columns(3)
+                for _ci, (_an, _lbl) in enumerate(_row_items):
+                    with _row_cols[_ci]:
+                        _fig_a, _ax_a = _plt.subplots(figsize=(4.5, 3.8))
+                        _cluster_ax(_ax_a, X_2d_cmp, _lbl, _an, ok01)
+                        _fig_a.tight_layout()
+                        st.pyplot(_fig_a)
+                        _plt.close(_fig_a)
 
     for group_name, ds_map in _CMP_DS_GROUPS.items():
         st.markdown(f"**{group_name}**")
@@ -1874,7 +1913,7 @@ elif page == PAGES[4]:
 
     user_ds_saved = st.session_state.user_datasets
     if user_ds_saved:
-        st.markdown("**💾 Мои сохранённые датасеты**")
+        st.markdown("**Мои сохранённые датасеты**")
         _u_keys   = list(user_ds_saved.keys())
         _u_n_row  = 5
         for _u_row_start in range(0, len(_u_keys), _u_n_row):
@@ -1897,7 +1936,7 @@ elif page == PAGES[4]:
                 break
 
         st.markdown("---")
-        st.subheader(f"📊 {active_label}")
+        st.subheader(f"{active_label}")
 
         if is_user_ds and active_key in st.session_state.user_datasets:
             meta_cmp = st.session_state.user_datasets[active_key]
@@ -1920,7 +1959,7 @@ elif page == PAGES[4]:
             X_2d_cmp, ok01 = _make_2d(X_cmp)
 
 
-            if param_mode == "🔍 Перебор по сетке":
+            if param_mode == "Перебор по сетке":
                 gs_cache = st.session_state.get("_cmp_gs_cache", {})
                 cache_key = (active_key, tuple(sorted(selected_algs)))
                 if cache_key not in gs_cache:
@@ -1944,7 +1983,8 @@ elif page == PAGES[4]:
                                 inst = st.session_state.user_algorithms[aname]["instance"]
                                 with st.spinner(f"  {aname} (сохранённые параметры)…"):
                                     lbl = np.asarray(inst.fit_predict(X_cmp), dtype=int)
-                                p_str = _fmt_params(st.session_state.user_algorithms[aname].get("params", {}))
+                                _sp = st.session_state.user_algorithms[aname].get("params") or {}
+                                p_str = _fmt_params(_sp) if _sp else _fmt_params(_extract_inst_params(inst))
                             else:
                                 _center = _auto_best_params(aname, X_cmp, y_cmp)
                                 pg = _param_grid_for(aname, X_cmp, center_params=_center)
@@ -1953,7 +1993,7 @@ elif page == PAGES[4]:
                                     best_p, lbl, best_sc = _grid_search_for(aname, X_cmp, y_cmp, pg)
                                 p_str = _fmt_params(best_p)
                             mets = _compute_metrics(X_cmp, y_cmp, lbl)
-                            row  = {"Алгоритм": f"👤 {aname}" if aname in st.session_state.user_algorithms else aname}
+                            row  = {"Алгоритм": aname}
                             row.update(mets)
                             row["параметры"] = p_str
                             metric_rows_gs.append(row)
@@ -1965,7 +2005,7 @@ elif page == PAGES[4]:
                 else:
                     metric_rows_gs, figs_list_gs = gs_cache[cache_key]
                     st.success("Показаны кэшированные результаты перебора. Нажми датасет снова для сброса.")
-                    if st.button("🔄 Перезапустить перебор", key="rerun_gs_btn"):
+                    if st.button("Перезапустить перебор", key="rerun_gs_btn"):
                         st.session_state.pop("_cmp_gs_cache", None)
                         st.rerun()
                 _show_results(X_cmp, y_cmp, X_2d_cmp, ok01, active_label, metric_rows_gs, figs_list_gs)
@@ -1978,7 +2018,8 @@ elif page == PAGES[4]:
                             inst = st.session_state.user_algorithms[aname]["instance"]
                             with st.spinner(f"  {aname}…"):
                                 lbl = np.asarray(inst.fit_predict(X_cmp), dtype=int)
-                            p_str = _fmt_params(st.session_state.user_algorithms[aname].get("params", {}))
+                            _sp = st.session_state.user_algorithms[aname].get("params") or {}
+                            p_str = _fmt_params(_sp) if _sp else _fmt_params(_extract_inst_params(inst))
                         else:
                             cls = _load_registry().get(aname)
                             with st.spinner(f"  {aname}…"):
@@ -1996,7 +2037,7 @@ elif page == PAGES[4]:
                                 if _get_k(lbl_fb) >= 2 and _fb_score > _cur_score:
                                     lbl, p_str = lbl_fb, _fmt_params(p_fb)
                         mets = _compute_metrics(X_cmp, y_cmp, lbl)
-                        row  = {"Алгоритм": f"👤 {aname}" if aname in st.session_state.user_algorithms else aname}
+                        row  = {"Алгоритм": aname}
                         row.update(mets)
                         row["параметры"] = p_str
                         metric_rows.append(row)
@@ -2011,29 +2052,29 @@ elif page == PAGES[4]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif page == PAGES[5]:
-    st.title("🔗 Консенсус-анализ")
+    st.title("Консенсус-анализ")
     st.markdown("Запусти полный консенсус-пайплайн с любыми алгоритмами и данными.")
     st.markdown("---")
 
     st.subheader("1. Выбор данных")
 
     _CON_DS_GROUPS = {
-        "🟢 UCI реальные": {
+        "UCI реальные": {
             "uci_iris": "Iris", "uci_wine": "Wine", "uci_seeds": "Seeds",
             "uci_ecoli": "Ecoli", "uci_statlog_segment": "Segmentation",
         },
-        "🟡 Habr синтетические": {
+        "Habr синтетические": {
             "habr_numpy_linear": "Linear", "habr_numpy_timeseries": "Timeseries",
             "habr_sklearn_blobs": "Blobs", "habr_sklearn_regression_style": "Regression",
             "habr_scipy_mixed": "Mixed",
         },
-        "🟠 SIPU формы": {
+        "SIPU формы": {
             "shape_flame": "Flame", "shape_jain": "Jain", "shape_spiral": "Spiral",
             "shape_aggregation": "Aggregation", "shape_r15": "R15", "shape_d31": "D31",
         },
     }
     if st.session_state.user_datasets:
-        _CON_DS_GROUPS["💾 Сохранённые"] = {
+        _CON_DS_GROUPS["Сохранённые"] = {
             k: k for k in st.session_state.user_datasets
         }
 
@@ -2132,6 +2173,7 @@ elif page == PAGES[5]:
             _monti_opts,
             index=min(_def_i, len(_monti_opts) - 1),
             key="con_monti2_single_alg",
+            format_func=lambda n: n[len("[U] "):] if n.startswith("[U] ") else n,
             help="Параметры подбираются так же, как в «Сравнение алгоритмов» → режим «Авто» (рекомендуемые vs внутренний авто).",
         )
         st.caption(
@@ -2161,6 +2203,7 @@ elif page == PAGES[5]:
                     _cohirf_opts,
                     index=min(_cd_i, len(_cohirf_opts) - 1),
                     key="con_cohirf_single_alg_diff",
+                    format_func=lambda n: n[len("[U] "):] if n.startswith("[U] ") else n,
                     help="Как в «Сравнение алгоритмов» → «Авто». CoHiRF сам строит случайные проекции и иерархию.",
                 )
         else:
@@ -2169,6 +2212,7 @@ elif page == PAGES[5]:
                 _cohirf_opts,
                 index=min(_cd_i, len(_cohirf_opts) - 1),
                 key="con_cohirf_single_alg",
+                format_func=lambda n: n[len("[U] "):] if n.startswith("[U] ") else n,
                 help="Как в «Сравнение алгоритмов» → «Авто». CoHiRF сам строит случайные проекции и иерархию.",
             )
 
@@ -2186,6 +2230,7 @@ elif page == PAGES[5]:
         _ms_base_label,
         all_names,
         default=[n for n in default_con if n in all_names],
+        format_func=lambda n: n[len("[U] "):] if n.startswith("[U] ") else n,
         help=(
             None
             if not ("monti2" in methods or "cohirf" in methods)
@@ -2196,17 +2241,17 @@ elif page == PAGES[5]:
     _user_con_names = list(st.session_state.user_consensus.keys())
     if _user_con_names:
         user_con_sel = st.multiselect(
-            "🧩 Мои методы консенсуса",
+            "Мои методы консенсуса",
             _user_con_names,
             default=_user_con_names,
             help=(
-                "См. раздел 🧩 Мой консенсус: с fit_from_consensus — матрицы базовых прогонов; "
+                "См. раздел Мой консенсус: с fit_from_consensus — матрицы базовых прогонов; "
                 "без него — только fit_predict(X)."
             ),
         )
     else:
         user_con_sel = []
-        st.caption("Нет загруженных пользовательских методов консенсуса. Загрузи в разделе **🧩 Мой консенсус**.")
+        st.caption("Нет загруженных пользовательских методов консенсуса. Загрузи в разделе **Мой консенсус**.")
 
     run_btn = st.button("▶ Запустить консенсус", type="primary")
 
@@ -2225,8 +2270,8 @@ elif page == PAGES[5]:
     if run_btn and _can_run and (methods or user_con_sel):
         from consensus.runner import ConsensusRunner
 
-        builtin_sel = [n for n in alg_sel if not n.startswith("👤 ")]
-        user_sel = [n for n in alg_sel if n.startswith("👤 ")]
+        builtin_sel = [n for n in alg_sel if not n.startswith("[U] ")]
+        user_sel = [n for n in alg_sel if n.startswith("[U] ")]
 
         _n_obj = X.shape[0]
         _k_max_auto = max(6, min(15, int(round(_n_obj ** 0.4))))
@@ -2288,18 +2333,18 @@ elif page == PAGES[5]:
                         _raw_lbl = getattr(_uc_inst, "labels_", None)
                         if _raw_lbl is None:
                             st.warning(
-                                f"🧩 '{_ucn}': после fit_from_consensus ожидается атрибут labels_."
+                                f"Метод '{_ucn}': после fit_from_consensus ожидается атрибут labels_."
                             )
                             continue
                         _uc_labels = np.asarray(_raw_lbl, dtype=int)
                         if _uc_labels.shape[0] != X.shape[0]:
                             st.warning(
-                                f"🧩 '{_ucn}': labels_ длины {_uc_labels.shape[0]}, ожидалось {X.shape[0]}."
+                                f"Метод '{_ucn}': labels_ длины {_uc_labels.shape[0]}, ожидалось {X.shape[0]}."
                             )
                             continue
                     else:
                         _uc_labels = np.asarray(_uc_inst.fit_predict(X), dtype=int)
-                    _uc_key = f"🧩 {_ucn}"
+                    _uc_key = _ucn
                     result.labels[_uc_key] = _uc_labels
                     result.k_found[_uc_key] = int(
                         len(np.unique(_uc_labels[_uc_labels >= 0]))
@@ -2310,7 +2355,7 @@ elif page == PAGES[5]:
                             _uc_inst.k_selection_method_ or ""
                         )
                 except Exception as _uc_e:
-                    st.warning(f"🧩 '{_ucn}' упал: {_uc_e}")
+                    st.warning(f"Метод '{_ucn}' упал: {_uc_e}")
 
         st.markdown("---")
         st.subheader("Результаты")
@@ -2353,14 +2398,13 @@ elif page == PAGES[5]:
             st.caption(f"Найдено кластеров — {_krow}")
 
         if result.run_weights is not None:
-            with st.expander("🔍 Качество базовых прогонов (веса применяются ко всем методам консенсуса)"):
-                _run_names = list(builtin_sel) + [n[len("👤 "):] for n in user_sel]
+            with st.expander("Качество базовых прогонов (веса применяются ко всем методам консенсуса)"):
+                _run_names = list(builtin_sel) + [n[len("[U] "):] for n in user_sel]
                 _n_show = min(len(_run_names), len(result.run_weights))
                 _max_w = max(float(result.run_weights.max()), 1e-9)
                 for _ri in range(_n_show):
                     _bar = int(result.run_weights[_ri] / _max_w * 25)
-                    _pfx = "👤 " if _run_names[_ri] in [n[len("👤 "):] for n in user_sel] else "   "
-                    st.text(f"{_pfx}{_run_names[_ri]:20s}: {'█'*_bar} {result.run_weights[_ri]:.3f}")
+                    st.text(f"{_run_names[_ri]:20s}: {'█'*_bar} {result.run_weights[_ri]:.3f}")
                 st.caption(
                     "Вес = покрытие × нормированная энтропия кластеров. "
                     "Одинаков для всех методов консенсуса, т.к. вычисляется один раз из прогонов базовых алгоритмов."
@@ -2385,11 +2429,12 @@ elif page == PAGES[5]:
                 else result.monti2_coassoc_matrix
             )
             _co_title = (
-                "Матрица совместной ассоциации (базовые прогоны ensemble)"
+                "Co-association Matrix"
                 if result.coassoc_matrix is not None
-                else "Матрица co-association (Monti2)"
+                else "Co-association Matrix (Monti2)"
             )
-            fig = plot_safe(plot_coassociation, _co_mat, _first_lbl, title=_co_title)
+            fig = plot_safe(plot_coassociation, _co_mat, _first_lbl,
+                            title=_co_title, figsize=(5, 4))
             if fig: st.pyplot(fig); close_fig(fig)
 
         for _ti, (_mname, _mlabels) in enumerate(result.labels.items(), start=1):

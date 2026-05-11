@@ -23,7 +23,7 @@ def _require_matplotlib():
 
 
 def _clean_label(name: str) -> str:
-    return name.replace("👤 ", "[U] ").replace("👤", "[U]")
+    return name.replace("[U] ", "[U] ")
 
 
 def plot_coassociation(

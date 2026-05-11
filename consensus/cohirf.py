@@ -189,7 +189,7 @@ def _choose_medoids(
             norms[norms < 1e-12] = 1.0
             X_norm = X_group / norms
             gram = np.abs(X_norm @ X_norm.T)
-            medoid_local = int(np.argmin(gram.sum(axis=1)))
+            medoid_local = int(np.argmax(gram.sum(axis=1)))
 
         new_active.append(int(members_global[medoid_local]))
         groups_orig.append(members_global.tolist())

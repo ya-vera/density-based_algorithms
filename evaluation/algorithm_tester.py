@@ -88,7 +88,7 @@ class AlgorithmReport:
         if self.issues:
             lines += ["", "--- Warnings / Issues ---"]
             for issue in self.issues:
-                lines.append(f"  ⚠ {issue}")
+                lines.append(f"  {issue}")
 
         lines.append("=" * 60)
         return "\n".join(lines)
