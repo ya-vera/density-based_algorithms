@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import tempfile
 import traceback
@@ -19,6 +20,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data_generator.registry import DATA_GENERATOR_BUILTIN_KEYS, load_data_generator_dataset
+from webapp.agent import (
+    AgentContext,
+    ChatMessage,
+    LLMError,
+    ask_agent,
+    build_backend,
+)
 
 import streamlit as st
 
@@ -375,6 +383,99 @@ def _run_benchmark(alg_name_list, n_samples=50):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# AI agent helper
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _build_agent_backend():
+    return build_backend(
+        "ollama",
+        model=st.session_state.get("_agent_ollama_model", "qwen2.5:7b"),
+        host=st.session_state.get("_agent_ollama_host", "http://localhost:11434"),
+    )
+
+
+@st.fragment
+def _agent_chat_fragment(context_key: str, chat_key: str) -> None:
+    ctx_data = st.session_state.get(context_key)
+    if not ctx_data:
+        st.caption(
+            "Сначала запусти сравнение или консенсус — агенту нужен "
+            "результат, чтобы дать предметный ответ."
+        )
+        return
+
+    ctx = AgentContext(
+        dataset_name=ctx_data.get("dataset_name"),
+        n_samples=ctx_data.get("n_samples"),
+        n_features=ctx_data.get("n_features"),
+        k_true=ctx_data.get("k_true"),
+        section=ctx_data.get("section"),
+        algorithm_results=ctx_data.get("algorithm_results", []) or [],
+        consensus_results=ctx_data.get("consensus_results", []) or [],
+        extra_notes=ctx_data.get("extra_notes", []) or [],
+    )
+
+    backend = _build_agent_backend()
+    if not backend.is_available():
+        st.warning(
+            "Ollama не отвечает на "
+            f"`{st.session_state.get('_agent_ollama_host', 'http://localhost:11434')}`. "
+            "Запусти `ollama serve` и убедись, что модель скачана "
+            "(`ollama pull qwen2.5:7b`)."
+        )
+        return
+
+    history = st.session_state.get(chat_key, [])
+    for msg in history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    user_q = st.chat_input("Спроси что-нибудь о результатах…", key=f"{chat_key}_input")
+    if user_q:
+        history = list(history)
+        history.append({"role": "user", "content": user_q})
+        with st.chat_message("user"):
+            st.markdown(user_q)
+        chat_hist = [ChatMessage(role=m["role"], content=m["content"]) for m in history[:-1]]
+        is_first = not st.session_state.get("_agent_first_call_done", False)
+        spinner_text = (
+            "Агент думает… (первый запрос может занять 1–2 минуты, "
+            "пока модель загружается в память)"
+            if is_first
+            else "Агент думает…"
+        )
+        try:
+            with st.spinner(spinner_text):
+                answer = ask_agent(backend, ctx, user_q, chat_history=chat_hist)
+            st.session_state["_agent_first_call_done"] = True
+        except LLMError as e:
+            answer = f"Ошибка LLM: {e}"
+        except Exception as e:
+            msg = str(e)
+            if "timed out" in msg.lower() or "timeout" in msg.lower():
+                answer = (
+                    "Запрос к Ollama не уложился в таймаут. Это бывает на CPU "
+                    "с крупными моделями. Попробуй модель поменьше — "
+                    "впиши `qwen2.5:3b` или `llama3.2` в боковой панели."
+                )
+            else:
+                answer = f"Неожиданная ошибка: {e}"
+        history.append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant"):
+            st.markdown(answer)
+        st.session_state[chat_key] = history
+
+    if history and st.button("Очистить историю", key=f"{chat_key}_clear"):
+        st.session_state[chat_key] = []
+        st.rerun(scope="fragment")
+
+
+def _render_agent_chat(context_key: str, chat_key: str, title: str = "Спросить агента") -> None:
+    with st.expander(title, expanded=False):
+        _agent_chat_fragment(context_key, chat_key)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Sidebar navigation
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -429,6 +530,25 @@ with st.sidebar:
                 st.rerun()
     else:
         st.caption("Нет сохранённых датасетов.")
+
+    st.markdown("---")
+    with st.expander("AI-агент (Ollama)", expanded=False):
+        st.caption(
+            "Локальный чат-агент через Ollama. Перед использованием запусти "
+            "`ollama serve` и скачай модель через `ollama pull <name>`. "
+            "**Для качественных ответов на русском рекомендуется "
+            "`qwen2.5:7b`** или `llama3.1:8b` — модель `llama3.2` (3B) "
+            "часто зацикливается и мешает языки."
+        )
+        st.session_state["_agent_ollama_model"] = st.text_input(
+            "Модель Ollama",
+            value=st.session_state.get("_agent_ollama_model", "qwen2.5:7b"),
+            help="Скачивается через `ollama pull <name>`. Примеры: qwen2.5:7b, llama3.1:8b, llama3.2.",
+        )
+        st.session_state["_agent_ollama_host"] = st.text_input(
+            "Хост Ollama",
+            value=st.session_state.get("_agent_ollama_host", "http://localhost:11434"),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1910,6 +2030,8 @@ elif page == PAGES[4]:
                 st.session_state["_cmp_open"]    = ds_key
                 st.session_state["_cmp_is_user"] = False
                 st.session_state.pop("_cmp_gs_cache", None)
+                st.session_state.pop("_cmp_auto_cache", None)
+                st.session_state["_agent_chat_cmp"] = []
 
     user_ds_saved = st.session_state.user_datasets
     if user_ds_saved:
@@ -1924,6 +2046,8 @@ elif page == PAGES[4]:
                     st.session_state["_cmp_open"]    = uds_key
                     st.session_state["_cmp_is_user"] = True
                     st.session_state.pop("_cmp_gs_cache", None)
+                    st.session_state.pop("_cmp_auto_cache", None)
+                    st.session_state["_agent_chat_cmp"] = []
 
     active_key = st.session_state.get("_cmp_open")
     is_user_ds = st.session_state.get("_cmp_is_user", False)
@@ -2009,42 +2133,73 @@ elif page == PAGES[4]:
                         st.session_state.pop("_cmp_gs_cache", None)
                         st.rerun()
                 _show_results(X_cmp, y_cmp, X_2d_cmp, ok01, active_label, metric_rows_gs, figs_list_gs)
+                st.session_state["_last_cmp_context"] = {
+                    "dataset_name": active_label,
+                    "n_samples": int(X_cmp.shape[0]),
+                    "n_features": int(X_cmp.shape[1]),
+                    "k_true": int(len(np.unique(y_cmp))) if y_cmp is not None else None,
+                    "section": "Сравнение алгоритмов (перебор по сетке)",
+                    "algorithm_results": metric_rows_gs,
+                }
 
             else:
-                metric_rows, figs_list = [], []
-                for aname in selected_algs:
-                    try:
-                        if aname in st.session_state.user_algorithms:
-                            inst = st.session_state.user_algorithms[aname]["instance"]
-                            with st.spinner(f"  {aname}…"):
-                                lbl = np.asarray(inst.fit_predict(X_cmp), dtype=int)
-                            _sp = st.session_state.user_algorithms[aname].get("params") or {}
-                            p_str = _fmt_params(_sp) if _sp else _fmt_params(_extract_inst_params(inst))
-                        else:
-                            cls = _load_registry().get(aname)
-                            with st.spinner(f"  {aname}…"):
-                                p_best = _auto_best_params(aname, X_cmp, y_cmp)
-                                lbl = np.asarray(cls(**p_best).fit_predict(X_cmp), dtype=int)
-                            p_str = _fmt_params(p_best)
-                            _cur_score = _score_lbl(lbl, X_cmp, y_cmp)
-                            _need_fallback = _get_k(lbl) < 2 or _cur_score < 0
-                            if _need_fallback:
-                                with st.spinner(f"  {aname}: результат неудовлетворительный → перебор…"):
-                                    pg = _param_grid_for(aname, X_cmp, center_params=p_best)
-                                    p_fb, lbl_fb, sc_fb = _grid_search_for(
-                                        aname, X_cmp, y_cmp, pg, max_combos=30)
-                                _fb_score = _score_lbl(lbl_fb, X_cmp, y_cmp)
-                                if _get_k(lbl_fb) >= 2 and _fb_score > _cur_score:
-                                    lbl, p_str = lbl_fb, _fmt_params(p_fb)
-                        mets = _compute_metrics(X_cmp, y_cmp, lbl)
-                        row  = {"Алгоритм": aname}
-                        row.update(mets)
-                        row["параметры"] = p_str
-                        metric_rows.append(row)
-                        figs_list.append((aname, lbl))
-                    except Exception as e:
-                        metric_rows.append({"Алгоритм": aname, "k": "ERR", "шум": str(e)[:60]})
+                auto_cache = st.session_state.get("_cmp_auto_cache", {})
+                auto_key = (active_key, tuple(sorted(selected_algs)))
+                if auto_key not in auto_cache:
+                    metric_rows, figs_list = [], []
+                    for aname in selected_algs:
+                        try:
+                            if aname in st.session_state.user_algorithms:
+                                inst = st.session_state.user_algorithms[aname]["instance"]
+                                with st.spinner(f"  {aname}…"):
+                                    lbl = np.asarray(inst.fit_predict(X_cmp), dtype=int)
+                                _sp = st.session_state.user_algorithms[aname].get("params") or {}
+                                p_str = _fmt_params(_sp) if _sp else _fmt_params(_extract_inst_params(inst))
+                            else:
+                                cls = _load_registry().get(aname)
+                                with st.spinner(f"  {aname}…"):
+                                    p_best = _auto_best_params(aname, X_cmp, y_cmp)
+                                    lbl = np.asarray(cls(**p_best).fit_predict(X_cmp), dtype=int)
+                                p_str = _fmt_params(p_best)
+                                _cur_score = _score_lbl(lbl, X_cmp, y_cmp)
+                                _need_fallback = _get_k(lbl) < 2 or _cur_score < 0
+                                if _need_fallback:
+                                    with st.spinner(f"  {aname}: результат неудовлетворительный → перебор…"):
+                                        pg = _param_grid_for(aname, X_cmp, center_params=p_best)
+                                        p_fb, lbl_fb, sc_fb = _grid_search_for(
+                                            aname, X_cmp, y_cmp, pg, max_combos=30)
+                                    _fb_score = _score_lbl(lbl_fb, X_cmp, y_cmp)
+                                    if _get_k(lbl_fb) >= 2 and _fb_score > _cur_score:
+                                        lbl, p_str = lbl_fb, _fmt_params(p_fb)
+                            mets = _compute_metrics(X_cmp, y_cmp, lbl)
+                            row  = {"Алгоритм": aname}
+                            row.update(mets)
+                            row["параметры"] = p_str
+                            metric_rows.append(row)
+                            figs_list.append((aname, lbl))
+                        except Exception as e:
+                            metric_rows.append({"Алгоритм": aname, "k": "ERR", "шум": str(e)[:60]})
+                    auto_cache[auto_key] = (metric_rows, figs_list)
+                    st.session_state["_cmp_auto_cache"] = auto_cache
+                    st.session_state["_agent_chat_cmp"] = []
+                else:
+                    metric_rows, figs_list = auto_cache[auto_key]
                 _show_results(X_cmp, y_cmp, X_2d_cmp, ok01, active_label, metric_rows, figs_list)
+                st.session_state["_last_cmp_context"] = {
+                    "dataset_name": active_label,
+                    "n_samples": int(X_cmp.shape[0]),
+                    "n_features": int(X_cmp.shape[1]),
+                    "k_true": int(len(np.unique(y_cmp))) if y_cmp is not None else None,
+                    "section": "Сравнение алгоритмов (авто-параметры)",
+                    "algorithm_results": metric_rows,
+                }
+
+            st.markdown("---")
+            _render_agent_chat(
+                context_key="_last_cmp_context",
+                chat_key="_agent_chat_cmp",
+                title="Спросить AI-агента о результатах",
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2357,59 +2512,100 @@ elif page == PAGES[5]:
                 except Exception as _uc_e:
                     st.warning(f"Метод '{_ucn}' упал: {_uc_e}")
 
+        from evaluation.metrics import ClusteringMetrics
+        from sklearn.preprocessing import MinMaxScaler as _MMS
+        _X_sc = _MMS().fit_transform(X)
+
+        _rows = []
+        for _mname, _mlabels in result.labels.items():
+            _cm = ClusteringMetrics(_mlabels, y_true=y_true, X=_X_sc)
+            _ext = _cm.external()
+            _inn = _cm.internal()
+            _row = {"Метод": _mname, "k": result.k_found.get(_mname, "?")}
+            if _ext:
+                _row["ARI"]  = round(_ext.get("ari",  float("nan")), 3)
+                _row["NMI"]  = round(_ext.get("nmi",  float("nan")), 3)
+                try:
+                    from sklearn.metrics import adjusted_mutual_info_score as _ami_fn
+                    _row["AMI"] = round(float(_ami_fn(y_true, _mlabels)), 3)
+                except Exception:
+                    _row["AMI"] = float("nan")
+                _row["FMI"]  = round(_ext.get("fmi",  float("nan")), 3)
+            if _inn:
+                _row["SC"]   = round(_inn.get("silhouette",        float("nan")), 3)
+                _row["CHI"]  = round(_inn.get("calinski_harabasz", float("nan")), 1)
+                _row["DBI"]  = round(_inn.get("davies_bouldin",    float("nan")), 3)
+            _rows.append(_row)
+
+        st.session_state["_consensus_state"] = {
+            "X": X,
+            "y_true": y_true,
+            "ds_name": ds_name,
+            "labels": dict(result.labels),
+            "k_found": dict(result.k_found),
+            "k_selection_methods": dict(result.k_selection_methods),
+            "coassoc_matrix": result.coassoc_matrix,
+            "monti2_coassoc_matrix": getattr(result, "monti2_coassoc_matrix", None),
+            "run_weights": result.run_weights,
+            "rows": _rows,
+            "builtin_sel": list(builtin_sel),
+            "user_sel": list(user_sel),
+            "methods": list(methods or []),
+        }
+        st.session_state["_last_consensus_context"] = {
+            "dataset_name": ds_name,
+            "n_samples": int(X.shape[0]),
+            "n_features": int(X.shape[1]),
+            "k_true": int(len(np.unique(y_true))) if y_true is not None else None,
+            "section": "Консенсус-анализ",
+            "consensus_results": _rows,
+            "base_algorithms": list(builtin_sel) + list(user_sel),
+        }
+        st.session_state["_agent_chat_consensus"] = []
+
+    _consensus_state = st.session_state.get("_consensus_state")
+    if _consensus_state:
+        _cX = _consensus_state["X"]
+        _cy = _consensus_state["y_true"]
+        _c_ds_name = _consensus_state["ds_name"]
+        _c_labels = _consensus_state["labels"]
+        _c_k_found = _consensus_state["k_found"]
+        _c_ksm = _consensus_state["k_selection_methods"]
+        _c_coassoc = _consensus_state["coassoc_matrix"]
+        _c_monti2_coassoc = _consensus_state["monti2_coassoc_matrix"]
+        _c_weights = _consensus_state["run_weights"]
+        _c_rows = _consensus_state["rows"]
+        _c_builtin_sel = _consensus_state["builtin_sel"]
+        _c_user_sel = _consensus_state["user_sel"]
+        _c_methods = _consensus_state["methods"]
+
         st.markdown("---")
         st.subheader("Результаты")
 
-        if result.labels:
-            from evaluation.metrics import ClusteringMetrics
-            from sklearn.preprocessing import MinMaxScaler as _MMS
-            _X_sc = _MMS().fit_transform(X)
+        if _c_rows:
+            import pandas as _pd
+            _df = _pd.DataFrame(_c_rows).set_index("Метод")
+            st.dataframe(_df, width="stretch")
 
-            _rows = []
-            for _mname, _mlabels in result.labels.items():
-                _cm = ClusteringMetrics(_mlabels, y_true=y_true, X=_X_sc)
-                _ext = _cm.external()
-                _inn = _cm.internal()
-                _row = {"Метод": _mname, "k": result.k_found.get(_mname, "?")}
-                if _ext:
-                    _row["ARI"]  = round(_ext.get("ari",  float("nan")), 3)
-                    _row["NMI"]  = round(_ext.get("nmi",  float("nan")), 3)
-                    try:
-                        from sklearn.metrics import adjusted_mutual_info_score as _ami_fn
-                        _row["AMI"] = round(float(_ami_fn(y_true, _mlabels)), 3)
-                    except Exception:
-                        _row["AMI"] = float("nan")
-                    _row["FMI"]  = round(_ext.get("fmi",  float("nan")), 3)
-                if _inn:
-                    _row["SC"]   = round(_inn.get("silhouette",        float("nan")), 3)
-                    _row["CHI"]  = round(_inn.get("calinski_harabasz", float("nan")), 1)
-                    _row["DBI"]  = round(_inn.get("davies_bouldin",    float("nan")), 3)
-                _rows.append(_row)
-
-            if _rows:
-                import pandas as _pd
-                _df = _pd.DataFrame(_rows).set_index("Метод")
-                st.dataframe(_df, width="stretch")
-
-        if result.k_found:
+        if _c_k_found:
             _krow = "  |  ".join(
-                f"**{m}**: k={k}" for m, k in result.k_found.items()
+                f"**{m}**: k={k}" for m, k in _c_k_found.items()
             )
             st.caption(f"Найдено кластеров — {_krow}")
 
-        if result.run_weights is not None:
+        if _c_weights is not None:
             with st.expander("Качество базовых прогонов (веса применяются ко всем методам консенсуса)"):
-                _run_names = list(builtin_sel) + [n[len("[U] "):] for n in user_sel]
-                _n_show = min(len(_run_names), len(result.run_weights))
-                _max_w = max(float(result.run_weights.max()), 1e-9)
+                _run_names = list(_c_builtin_sel) + [n[len("[U] "):] for n in _c_user_sel]
+                _n_show = min(len(_run_names), len(_c_weights))
+                _max_w = max(float(_c_weights.max()), 1e-9)
                 for _ri in range(_n_show):
-                    _bar = int(result.run_weights[_ri] / _max_w * 25)
-                    st.text(f"{_run_names[_ri]:20s}: {'█'*_bar} {result.run_weights[_ri]:.3f}")
+                    _bar = int(_c_weights[_ri] / _max_w * 25)
+                    st.text(f"{_run_names[_ri]:20s}: {'█'*_bar} {_c_weights[_ri]:.3f}")
                 st.caption(
                     "Вес = покрытие × нормированная энтропия кластеров. "
                     "Одинаков для всех методов консенсуса, т.к. вычисляется один раз из прогонов базовых алгоритмов."
                 )
-        elif "monti2" in (methods or []) and not builtin_sel and not user_sel:
+        elif "monti2" in (_c_methods or []) and not _c_builtin_sel and not _c_user_sel:
             st.caption(
                 "Monti2: веса ensemble не считались (нет базового multiselect). "
                 "На вкладке слева — матрица co-association **только Monti2** "
@@ -2418,36 +2614,44 @@ elif page == PAGES[5]:
 
         from visualization.plots import plot_coassociation, plot_cluster_projection
 
-        tab_names = ["Co-association"] + [f"{m} (k={result.k_found.get(m,'?')})" for m in result.labels]
+        tab_names = ["Co-association"] + [f"{m} (k={_c_k_found.get(m,'?')})" for m in _c_labels]
         tabs = st.tabs(tab_names)
 
         with tabs[0]:
-            _first_lbl = next(iter(result.labels.values()), None)
-            _co_mat = (
-                result.coassoc_matrix
-                if result.coassoc_matrix is not None
-                else result.monti2_coassoc_matrix
-            )
+            _first_lbl = next(iter(_c_labels.values()), None)
+            _co_mat = _c_coassoc if _c_coassoc is not None else _c_monti2_coassoc
             _co_title = (
                 "Co-association Matrix"
-                if result.coassoc_matrix is not None
+                if _c_coassoc is not None
                 else "Co-association Matrix (Monti2)"
             )
             fig = plot_safe(plot_coassociation, _co_mat, _first_lbl,
                             title=_co_title, figsize=(5, 4))
             if fig: st.pyplot(fig); close_fig(fig)
 
-        for _ti, (_mname, _mlabels) in enumerate(result.labels.items(), start=1):
+        for _ti, (_mname, _mlabels) in enumerate(_c_labels.items(), start=1):
             with tabs[_ti]:
-                _k_info = result.k_found.get(_mname, "?")
-                _ksm    = result.k_selection_methods.get(_mname, "")
+                _k_info = _c_k_found.get(_mname, "?")
+                _ksm    = _c_ksm.get(_mname, "")
                 _t_info = f"{_mname} · k={_k_info}"
                 if _ksm:
                     _t_info += f" (метод: {_ksm})"
                 fig = plot_safe(
-                    plot_cluster_projection, X, _mlabels,
-                    title=f"{ds_name} — {_t_info}",
+                    plot_cluster_projection, _cX, _mlabels,
+                    title=f"{_c_ds_name} — {_t_info}",
                 )
                 if fig: st.pyplot(fig); close_fig(fig)
+
+        st.markdown("---")
+        if st.button("Сбросить результаты консенсуса", key="con_reset_results"):
+            for _ck in ("_consensus_state", "_last_consensus_context",
+                        "_agent_chat_consensus"):
+                st.session_state.pop(_ck, None)
+            st.rerun()
+        _render_agent_chat(
+            context_key="_last_consensus_context",
+            chat_key="_agent_chat_consensus",
+            title="Спросить AI-агента о консенсусе",
+        )
 
 
